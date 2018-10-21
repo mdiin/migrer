@@ -13,14 +13,29 @@
                               :seed ::seed-migration
                               :repeatable ::repeatable-migration))
 
-(s/def ::migration-path (s/cat :root ::migration-root :file ::migration-file))
+(s/def :migrations/filename ::migration-file)
+(s/def :migrations/type #{:versioned :seed :repeatable})
+(s/def :migrations/sql (s/and string? (comp not empty?)))
+(s/def :migrations/description (s/and string? (comp not empty?)))
+(s/def :migrations/sequence# (s/and string? (comp not empty?)))
+
+(s/def ::migration-map
+  (s/keys :req [:migrations/filename
+                :migrations/type
+                :migrations/sql
+                :migrations/description
+                :migrations/sequence#]))
 
 (s/def :migrer/reset? boolean?)
 
-(s/def ::options (s/keys :opt [:migrer/reset?]))
+(s/def ::options (s/keys :opt [:migrer/clean?]))
+
+(s/fdef m/init!
+  :args (s/cat :conn ::jdbc/db-spec)
+  :ret nil?)
 
 (s/fdef m/migrate
   :args (s/alt :conn (s/cat :conn ::jdbc/db-spec)
                :conn+path (s/cat :conn ::jdbc/db-spec :root ::migration-root)
                :conn+path+opts (s/cat :conn ::jdbc/db-spec :path ::path :opts ::options))
-  :ret (s/coll-of ::migration-path))
+  :ret (s/coll-of ::migration-map))

@@ -50,42 +50,28 @@
   "
   (:require
    [clojure.java.io :as io]
+   [clojure.java.jdbc :as jdbc]
    [clojure.spec.alpha :as s]
-   [clojure.string :as str]))
+   [clojure.string :as str])
+  (:import
+   [java.security MessageDigest]))
 
-(defmulti compare-migration-maps
-  (fn [m1 m2]
-    [(:migrations/type m1) (:migrations/type m2)]))
-
-(defmethod compare-migration-maps [:versioned :versioned]
-  [{m1-sequence :migrations/sequence#} {m2-sequence :migrations/sequence#}]
-  (compare m1-sequence m2-sequence))
-
-(defmethod compare-migration-maps [:versioned :seed]
-  [{versioned-sequence :migrations/sequence#} {seed-sequence :migrations/sequence#}]
-  (let [comparison (compare versioned-sequence seed-sequence)]
-    (if (= comparison 0) -1 comparison)))
-
-(defmethod compare-migration-maps [:versioned :repeatable]
-  [_ _]
-  -1)
-
-(defmethod compare-migration-maps [:seed :versioned]
-  [{seed-sequence :migrations/sequence#} {versioned-sequence :migrations/sequence#}]
-  (let [comparison (compare seed-sequence versioned-sequence)]
-    (if (= comparison 0) 1 comparison)))
-
-(defmethod compare-migration-maps [:repeatable :versioned]
-  [_ _]
-  1)
-
-(defmethod compare-migration-maps [:seed :repeatable]
-  [_ _]
-  -1)
-
-(defmethod compare-migration-maps [:repeatable :seed]
-  [_ _]
-  1)
+(defn- compare-migration-maps
+  [m1 m2]
+  (let [{m1-version :migrations/version} m1
+        {m2-version :migrations/version} m2]
+    (case [(:migrations/type m1) (:migrations/type m2)]
+      [:versioned :versioned] (compare m1-version m2-version)
+      [:versioned :seed] (let [comparison (compare m1-version m2-version)]
+                           (if (= comparison 0) -1 comparison))
+      [:versioned :repeatable] -1
+      [:seed :seed] (compare m1-version m2-version)
+      [:seed :versioned] (let [comparison (compare m1-version m2-version)]
+                           (if (= comparison 0) 1 comparison))
+      [:seed :repeatable] -1
+      [:repeatable :repeatable] (compare m1-version m2-version)
+      [:repeatable :versioned] 1
+      [:repeatable :seed] 1)))
 
 (def migration-map-comparator (proxy [java.util.Comparator] []
                                 (compare [o1 o2]
@@ -96,63 +82,61 @@
            (compare [o1 o2]
              (compare-migration-maps o1 o2))))
 
-  (sort c [#:migrations{:type :versioned
-                        :sequence# "001"}
-           #:migrations{:type :seed
-                        :sequence# "000"}
-           #:migrations{:type :repeatable
-                        :sequence# "000"}
+  (sort c [#:migrations{:type :repeatable
+                        :version "001"}
            #:migrations{:type :versioned
-                        :sequence# "000"}]))
+                        :version "001"}
+           #:migrations{:type :seed
+                        :version "001"}
+           #:migrations{:type :repeatable
+                        :version "000"}
+           #:migrations{:type :seed
+                        :version "000"}
+           #:migrations{:type :versioned
+                        :version "000"}]))
 
 (defn- read-resource
   [path]
   (slurp (io/resource path)))
 
-(defn- extract-from-filename
-  [type-prefix file-name]
-  (-> file-name
+(defn- extract-from-path
+  [path]
+  (-> path
       (str/split #"/")
       (last)
-      (->> (re-matches (re-pattern (str "^" type-prefix "(\\d+)__(.+).sql$")))
-           (rest))))
+      (->> (re-matches (re-pattern (str "^(\\w)(\\d+)__(.+).sql$"))))))
 
-(defmulti migration-map
-  "Given a file-name, create a map with sequence and migration type extracted, and
+(defn- migration-map
+  "Given a path, create a map with version and migration type extracted, and
   data slurped."
-  (fn migration-map-dispatch [file-name]
-    (first file-name)))
+  [path]
+  (let [[filename type version description] (extract-from-path path)]
+    (assert (some #{"V" "R" "S"} [type]) (str "Unknown migration type: " type ". Supported types are [\"V\"ersioned \"S\"eed \"R\"epeatable]"))
+    (let [migration-type (case type
+                           "V" :versioned
+                           "S" :seed
+                           "R" :repeatable)]
+      #:migrations{:type migration-type
+                   :filename filename
+                   :sql (read-resource path)
+                   :description description
+                   :version version})))
 
-(defmethod migration-map "V"
-  [file-name]
-  (let [[sequence description] (extract-from-filename file-name)]
-    #:migrations{:type :versioned
-                 :sql (read-resource file-name)
-                 :description description
-                 :sequence# sequence}))
-
-(defmethod migration-map "S"
-  [file-name]
-  (let [[sequence description] (extract-from-filename file-name)]
-    #:migrations{:type :seed
-                 :sql (read-resource file-name)
-                 :description description
-                 :sequence# sequence}))
-
-(defmethod migration-map "R"
-  [file-name]
-  (let [[sequence description] (extract-from-filename file-name)]
-    #:migrations{:type :repeatable
-                 :sql (read-resource file-name)
-                 :description description
-                 :sequence# sequence}))
+(defn- md5sum
+  "Attribution: https://gist.github.com/jizhang/4325757"
+  [^String s]
+  (->> s
+       (.getBytes)
+       (.digest (MessageDigest/getInstance "MD5"))
+       (BigInteger. 1)
+       (format "%032x")))
 
 (defn- read-migration-resources
   "Returns a vector of all migrations in migration root."
   {:impl-doc "Uses getResourceAsStream on the context classloader because the regular
              clojure.java.io/resource call does not handle directories. We use the
              resource stream to read the names of all resources inside a resource dir."}
-  [root exclusions]
+  [root exclusions repeatable-hashes]
   (with-open [rdr (io/reader
                    (.getResourceAsStream
                     (.. Thread currentThread getContextClassLoader)
@@ -161,21 +145,93 @@
           (into []
                 (comp
                  (remove exclusions)
-                 (map migration-map))
+                 (map migration-map)
+                 (remove (fn [{filename :migrations/filename sql :migrations/sql}]
+                           (when-let [old-hash (get repeatable-hashes filename)]
+                             (= old-hash (md5sum sql))))))
                 (line-seq rdr)))))
 
+(defn- exclusions
+  [conn]
+  (let [performed-migrations (jdbc/query conn ["SELECT filename FROM migrations WHERE type <> 'repeatable';"])]
+    (into #{} performed-migrations)))
+
+(defn- repeatable-hashes
+  [conn]
+  (let [repeatable-hashes (jdbc/query conn ["SELECT filename, hash, performed_at AS \"performed-at\" FROM migrations WHERE type = 'repeatable';"])]
+    (into {} (map (group-by :filename repeatable-hashes)
+                  (fn [filename [entry]]
+                    [filename entry])))))
+
 (defn- perform-migration-sql
-  [conn {sql :migrations/sql}]
-  [])
+  [conn {sql :migrations/sql :as migration-map} log-fn]
+  (log-fn {:event/type :start} migration-map)
+  (try
+    (log-fn {:event/type :progress :event/data sql})
+    (let [time-start (.. (new java.util.Date) (getTime))]
+      (jdbc/execute! conn [sql])
+      (log-fn {:event/type :done
+               :event/data {:ms (- time-start (.. (new java.util.Date) (getTime)))}})
+      (let [{type :migrations/type
+             version :migrations/version
+             filename :migrations/filename} migration-map]
+        (if (= type :repeatable)
+          (jdbc/execute! conn ["INSERT INTO migrations (type, version, filename, hash) VALUES (?, ?, ?, ?)"
+                               type version filename (md5sum sql)])
+          (jdbc/execute! conn ["INSERT INTO migrations (type, version, filename) VALUES (?, ?, ?)"
+                               type version filename])))
+      :result/done)
+    (catch Exception e
+      (log-fn {:event/type :error :event/data (.getCause e)})
+      :result/error)))
+
+(defn- log-migration
+  [event migration-map]
+  (let [{event-type :type} event
+        {type :migrations/type
+         version :migrations/version
+         sql :migrations/sql
+         description :migrations/description} migration-map]
+    (case event-type
+      (:start) (println (str "=== " event-type " === [" type " | " description " @ " version "]"))
+      (:progress) (println (:event/data event))
+      (:error) (println (str "=== " event-type " ===\n"
+                             (:event/data event)
+                             "=== ERROR REPORT END ==="
+                             "\n"))
+      (:done) (println (str "=== " event-type " ===\n"
+                            "=== time: " (get-in event [:event/data :ms]) "ms ==="
+                            "\n")))))
+
+(defn init!
+  "Initialise migrations metadata on database."
+  [conn]
+  (jdbc/execute! conn [(jdbc/create-table-ddl :migrations
+                                              [[:type "varchar(32)" "not null"]
+                                               [:version "varchar(32)" "not null"]
+                                               [:filename "varchar(256)" "not null"]
+                                               [:hash "varchar(256)"]
+                                               [:performed_at "timestamp with time zone" "not null default now()"]]
+                                              {:conditional? true})])
+  (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS migrations_type_idx ON migrations (type);"]))
 
 (defn migrate
+  "Run any pending migrations."
   ([conn]
    (migrate conn "migrations/"))
   ([conn path]
    (migrate conn path {}))
   ([conn path options]
-   (if (get options :migrer/reset?)
-     (into []
-           (map (partial perform-migration-sql conn))
-           (read-migration-resources path #{}))
-     [])))
+   (reduce (fn [acc migration-map]
+             (if (= (perform-migration-sql conn migration-map (or (:log-fn options) log-migration))
+                    :result/error)
+               (reduced acc)
+               (conj acc migration-map)))
+           []
+           (read-migration-resources path
+                                     (if (get options :migrer/clean?)
+                                       #{}
+                                       (exclusions conn))
+                                     (if (get options :migrer/clean?)
+                                       {}
+                                       (repeatable-hashes conn))))))
