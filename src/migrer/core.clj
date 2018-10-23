@@ -207,11 +207,11 @@
   "Initialise migrations metadata on database."
   [conn]
   (jdbc/execute! conn [(jdbc/create-table-ddl :migrations
-                                              [[:type "varchar(32)" "not null"]
-                                               [:version "varchar(32)" "not null"]
-                                               [:filename "varchar(256)" "not null"]
+                                              [[:type "varchar(32)" "NOT NULL"]
+                                               [:version "varchar(32)" "NOT NULL"]
+                                               [:filename "varchar(256)" "NOT NULL"]
                                                [:hash "varchar(256)"]
-                                               [:performed_at "timestamp with time zone" "not null default now()"]]
+                                               [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
                                               {:conditional? true})])
   (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS migrations_type_idx ON migrations (type);"]))
 

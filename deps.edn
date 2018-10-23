@@ -1,1 +1,2 @@
-{:deps {org.clojure/java.jdbc {:mvn/version "0.7.8"}}}
+{:deps {org.clojure/java.jdbc {:mvn/version "0.7.8"}}
+ :aliases {:test {:extra-paths ["test/migrer" "test/resources"]}}}
