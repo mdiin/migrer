@@ -1,15 +1,26 @@
 (ns migrer.core-test
   (:require [migrer.core :as m]
-            [clojure.test :refer :all]))
+            [clojure.test :refer :all]
+            [clojure.java.jdbc :as jdbc]
+            [clojure.java.classpath :as cp]))
+
+(comment
+  (cp/classpath))
+
+(def test-h2-db
+  {:classname "org.h2.Driver"
+   :subprotocol "h2:mem"
+   :subname "test;DB_CLOSE_DELAY=-1" ;; TODO: Something is fishy here...
+   :user "test"
+   :password ""})
+
+(use-fixtures :each
+  (fn [test]
+    (m/init! test-h2-db)
+    (test)))
 
 (deftest test-init!
-  (let [state (atom [])]
-    (with-redefs [clojure.java.jdbc/execute! (fn mock-execute!
-                                               ([_ sql]
-                                                (swap! state conj sql))
-                                               ([db sql opts]
-                                                (swap! state conj sql)))]
-      (m/init! {})
-      (is (= @state
-             [["CREATE TABLE IF NOT EXISTS migrations (type varchar(32) NOT NULL, version varchar(32) NOT NULL, filename varchar(256) NOT NULL, hash varchar(256), performed_at timestamp with time zone NOT NULL DEFAULT now())"]
-              ["CREATE INDEX IF NOT EXISTS migrations_type_idx ON migrations (type);"]])))))
+  (is (jdbc/query test-h2-db ["SELECT * FROM migrations"])))
+
+(deftest migrate
+  (is (seq (m/migrate test-h2-db))))
