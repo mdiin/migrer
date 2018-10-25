@@ -109,7 +109,7 @@
 (defn- migration-map
   "Given a path, create a map with version and migration type extracted, and
   data slurped."
-  [path]
+  [root path]
   (let [[filename type version description] (extract-from-path path)]
     (assert (some #{"V" "R" "S"} [type]) (str "Unknown migration type: " type ". Supported types are [\"V\"ersioned \"S\"eed \"R\"epeatable]"))
     (let [migration-type (case type
@@ -118,7 +118,7 @@
                            "R" :repeatable)]
       #:migrations{:type migration-type
                    :filename filename
-                   :sql (read-resource path)
+                   :sql (read-resource (str root path))
                    :description description
                    :version version})))
 
@@ -145,7 +145,7 @@
           (into []
                 (comp
                  (remove exclusions)
-                 (map migration-map)
+                 (map (partial migration-map root))
                  (remove (fn [{filename :migrations/filename sql :migrations/sql}]
                            (when-let [old-hash (get repeatable-hashes filename)]
                              (= old-hash (md5sum sql))))))
