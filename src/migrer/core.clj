@@ -168,11 +168,12 @@
   [conn {sql :migrations/sql :as migration-map} log-fn]
   (log-fn {:event/type :start} migration-map)
   (try
-    (log-fn {:event/type :progress :event/data sql})
+    (log-fn {:event/type :progress :event/data sql} migration-map)
     (let [time-start (.. (new java.util.Date) (getTime))]
       (jdbc/execute! conn [sql])
       (log-fn {:event/type :done
-               :event/data {:ms (- time-start (.. (new java.util.Date) (getTime)))}})
+               :event/data {:ms (- time-start (.. (new java.util.Date) (getTime)))}}
+              migration-map)
       (let [{type :migrations/type
              version :migrations/version
              filename :migrations/filename} migration-map]
@@ -183,12 +184,13 @@
                                type version filename])))
       :result/done)
     (catch Exception e
-      (log-fn {:event/type :error :event/data (.getCause e)})
+      (log-fn {:event/type :error :event/data (.getMessage e)}
+              migration-map)
       :result/error)))
 
 (defn- log-migration
   [event migration-map]
-  (let [{event-type :type} event
+  (let [{event-type :event/type} event
         {type :migrations/type
          version :migrations/version
          sql :migrations/sql
