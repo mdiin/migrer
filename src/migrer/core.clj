@@ -159,9 +159,10 @@
 (defn- repeatable-hashes
   [conn]
   (let [repeatable-hashes (jdbc/query conn ["SELECT filename, hash, performed_at AS \"performed-at\" FROM migrations WHERE type = 'repeatable';"])]
-    (into {} (map (group-by :filename repeatable-hashes)
-                  (fn [filename [entry]]
-                    [filename entry])))))
+    (into {}
+          (map (fn [filename [entry]]
+                 [filename entry]))
+          (group-by :filename repeatable-hashes))))
 
 (defn- perform-migration-sql
   [conn {sql :migrations/sql :as migration-map} log-fn]
