@@ -1,2 +1,8 @@
-{:deps {org.clojure/java.jdbc {:mvn/version "0.7.8"}}
- :aliases {:test {:extra-paths ["test/migrer" "test/resources"]}}}
+{:deps {org.clojure/java.jdbc {:mvn/version "0.7.8"}
+        com.h2database/h2 {:mvn/version "1.4.197"}
+        org.clojure/java.classpath {:mvn/version "0.3.0"}}
+ :paths ["src" "test" "test/resources"]
+ :aliases {:test {:extra-paths ["test/migrer"]
+                  :paths ["test/resources"]
+                  :extra-deps {com.h2database/h2 {:mvn/version "1.4.197"}
+                               lambdaisland/kaocha {:mvn/version "0.0-217"}}}}}
