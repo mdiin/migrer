@@ -1,8 +1,8 @@
-CREATE OR REPLACE VIEW users_in_cities AS (
+CREATE OR REPLACE VIEW products_in_cities AS (
   SELECT
-    u.id,
-    u.name AS user_name,
+    p.id,
+    p.name AS product_name,
     c.name AS city_name
-  FROM users u
-  INNER JOIN cities c ON c.id = u.city_id
+  FROM products p
+  INNER JOIN cities c ON c.id = p.city_id
 );
