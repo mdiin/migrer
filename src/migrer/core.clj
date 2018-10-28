@@ -5,18 +5,13 @@
 
   == Usage examples ==
 
-  With four files on the classpath under `migrations/`;
+  With three files on the classpath under `migrations/`;
 
-  - File `V001__create_database.sql` containing:
-
-  DROP DATABASE IF EXISTS migrer;
-  CREATE DATABASE migrer;
-
-  - File `V002__create_users_table.sql` containing:
+  - File `V001__create_users_table.sql` containing:
 
   CREATE TABLE public.users (id serial NOT NULL, name text NOT NULL, email text);
 
-  - File `S002__seed_users_table.sql` containing:
+  - File `S001__seed_users_table.sql` containing:
 
   INSERT INTO public.users (name, email)
   VALUES
@@ -35,18 +30,16 @@
 
   (require 'migrer.core)
   (def jdbc-connection-map {...}) ;; See clojure.java.jdbc docs
-  (migrer.core/migrate jdbc-connection-map) ;; => [\"migrations/V001__create_database.sql\"
-                                                   \"migrations/V002__create_users_table.sql\"
-                                                   \"migrations/S002__seed_users_table.sql\"
+  (migrer.core/migrate! jdbc-connection-map) ;; => [\"migrations/V001__create_users_table.sql\"
+                                                   \"migrations/S001__seed_users_table.sql\"
                                                    \"migrations/R001__users_with_email.sql\"]
 
-  After this the `migrer` database will contain the entities specified in the migrations,
+  After this the database will contain the entities specified in the migrations,
   and a special table `migrer.migrations` containing a record of each applied migration
   file.
 
-  The invocation of `migrer.core/migrate` can optionally be supplied with a path to the
-  migrations and a map of options. Currently only the `:migrer.options/reset` key is
-  supported, which if set to a truthy value will rerun all migrations from the first one.
+  The invocation of `migrer.core/migrate!` can optionally be supplied with a path to the
+  migrations and a map of options. Currently no options are available.
   "
   (:require
    [clojure.java.io :as io]
@@ -160,12 +153,12 @@
   [conn]
   (let [repeatable-hashes (jdbc/query conn ["SELECT filename, hash, performed_at AS \"performed-at\" FROM migrations WHERE type = 'repeatable';"])]
     (into {}
-          (map (fn [filename [entry]]
-                 [filename entry]))
+          (map (fn [[filename [entry]]]
+                 [filename (:hash entry)]))
           (group-by :filename repeatable-hashes))))
 
 (defn- perform-migration-sql
-  [conn {sql :migrations/sql :as migration-map} log-fn]
+  [conn migrations-table {sql :migrations/sql :as migration-map} log-fn]
   (log-fn {:event/type :start} migration-map)
   (try
     (log-fn {:event/type :progress :event/data sql} migration-map)
@@ -178,10 +171,10 @@
              version :migrations/version
              filename :migrations/filename} migration-map]
         (if (= type :repeatable)
-          (jdbc/execute! conn ["INSERT INTO migrations (type, version, filename, hash) VALUES (?, ?, ?, ?)"
-                               type version filename (md5sum sql)])
-          (jdbc/execute! conn ["INSERT INTO migrations (type, version, filename) VALUES (?, ?, ?)"
-                               type version filename])))
+          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash) VALUES (?, ?, ?, ?)")
+                               (name type) version filename (md5sum sql)])
+          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename) VALUES (?, ?, ?)")
+                               (name type) version filename])))
       :result/done)
     (catch Exception e
       (log-fn {:event/type :error :event/data (.getMessage e)}
@@ -207,34 +200,44 @@
                             "\n")))))
 
 (defn init!
-  "Initialise migrations metadata on database."
-  [conn]
-  (jdbc/execute! conn [(jdbc/create-table-ddl :migrations
-                                              [[:type "varchar(32)" "NOT NULL"]
-                                               [:version "varchar(32)" "NOT NULL"]
-                                               [:filename "varchar(256)" "NOT NULL"]
-                                               [:hash "varchar(256)"]
-                                               [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
-                                              {:conditional? true})])
-  (jdbc/execute! conn ["CREATE INDEX IF NOT EXISTS migrations_type_idx ON migrations (type);"]))
+  "Initialise migrations metadata on database.
 
-(defn migrate
-  "Run any pending migrations."
+  options are the same as for `migrate!`"
   ([conn]
-   (migrate conn "migrations/"))
-  ([conn path]
-   (migrate conn path {}))
-  ([conn path options]
+   (init! conn {:migrer/table-name :migrations}))
+  ([conn options]
+   (jdbc/execute! conn [(jdbc/create-table-ddl (:migrer/table-name options)
+                                               [[:type "varchar(32)" "NOT NULL"]
+                                                [:version "varchar(32)" "NOT NULL"]
+                                                [:filename "varchar(256)" "NOT NULL"]
+                                                [:hash "varchar(256)"]
+                                                [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
+                                               {:conditional? true})])
+   (let [table-name-str (name (:migrer/table-name options))]
+     (jdbc/execute! conn [(str "CREATE INDEX IF NOT EXISTS "
+                               table-name-str
+                               "_type_idx ON "
+                               table-name-str
+                               " (type);")]))))
+
+(defn migrate!
+  "Runs any pending migrations, returning a vector of the performed migrations in order.
+
+  options is a map with any of these keys:
+
+  - `:migrer/table-name`: The name of the table where migrer will store metadata about migrations"
+  ([conn]
+   (migrate! conn {:migrer/root "migrations/"
+                   :migrer/table-name :migrations}))
+  ([conn options]
    (reduce (fn [acc migration-map]
-             (if (= (perform-migration-sql conn migration-map (or (:log-fn options) log-migration))
+             (if (= (perform-migration-sql
+                     conn
+                     (name (:migrer/table-name options))
+                     migration-map
+                     (or (:log-fn options) log-migration))
                     :result/error)
                (reduced acc)
                (conj acc migration-map)))
            []
-           (read-migration-resources path
-                                     (if (get options :migrer/clean?)
-                                       #{}
-                                       (exclusions conn))
-                                     (if (get options :migrer/clean?)
-                                       {}
-                                       (repeatable-hashes conn))))))
+           (read-migration-resources (:migrer/root options) (exclusions conn) (repeatable-hashes conn)))))
