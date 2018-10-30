@@ -70,24 +70,6 @@
                                 (compare [o1 o2]
                                   (compare-migration-maps o1 o2))))
 
-(comment
-  (def c (proxy [java.util.Comparator] []
-           (compare [o1 o2]
-             (compare-migration-maps o1 o2))))
-
-  (sort c [#:migrations{:type :repeatable
-                        :version "001"}
-           #:migrations{:type :versioned
-                        :version "001"}
-           #:migrations{:type :seed
-                        :version "001"}
-           #:migrations{:type :repeatable
-                        :version "000"}
-           #:migrations{:type :seed
-                        :version "000"}
-           #:migrations{:type :versioned
-                        :version "000"}]))
-
 (defn- read-resource
   [path]
   (slurp (io/resource path)))
