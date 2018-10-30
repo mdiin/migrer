@@ -153,9 +153,12 @@
              version :migrations/version
              filename :migrations/filename} migration-map]
         (if (= type :repeatable)
-          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash) VALUES (?, ?, ?, ?)")
-                               (name type) version filename (md5sum sql)])
-          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename) VALUES (?, ?, ?)")
+          (jdbc/with-db-transaction [tx-conn conn]
+            (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status) VALUES (?, ?, ?, ?, 'performed')")
+                                 (name type) version filename (md5sum sql)])
+            (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
+                                    filename]))
+          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, status) VALUES (?, ?, ?, 'performed')")
                                (name type) version filename])))
       :result/done)
     (catch Exception e
@@ -189,18 +192,19 @@
    (init! conn {:migrer/table-name :migrations}))
   ([conn options]
    (jdbc/execute! conn [(jdbc/create-table-ddl (:migrer/table-name options)
-                                               [[:type "varchar(32)" "NOT NULL"]
-                                                [:version "varchar(32)" "NOT NULL"]
-                                                [:filename "varchar(256)" "NOT NULL"]
-                                                [:hash "varchar(256)"]
-                                                [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
-                                               {:conditional? true})])
-   (let [table-name-str (name (:migrer/table-name options))]
-     (jdbc/execute! conn [(str "CREATE INDEX IF NOT EXISTS "
-                               table-name-str
-                               "_type_idx ON "
-                               table-name-str
-                               " (type);")]))))
+                                                 [[:type "varchar(32)" "NOT NULL"]
+                                                  [:version "varchar(32)" "NOT NULL"]
+                                                  [:filename "varchar(512)" "UNIQUE NOT NULL"]
+                                                  [:hash "varchar(256)"]
+                                                  [:status "varchar(32) NOT NULL"]
+                                                  [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
+                                                 {:conditional? true})])
+     (let [table-name-str (name (:migrer/table-name options))]
+       (jdbc/execute! conn [(str "CREATE INDEX IF NOT EXISTS "
+                                 table-name-str
+                                 "_type_filename_idx ON "
+                                 table-name-str
+                                 " (type, filename);")]))))
 
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
