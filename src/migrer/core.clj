@@ -184,14 +184,19 @@
                             "=== time: " (get-in event [:event/data :ms]) "ms ==="
                             "\n")))))
 
+(def default-options {:migrer/root "migrations/"
+                      :migrer/table-name :migrations
+                      :migrer/log-fn #'log-migration})
+
 (defn init!
   "Initialise migrations metadata on database.
 
   options are the same as for `migrate!`"
   ([conn]
-   (init! conn {:migrer/table-name :migrations}))
+   (init! conn default-options))
   ([conn options]
-   (jdbc/execute! conn [(jdbc/create-table-ddl (:migrer/table-name options)
+   (let [opts (merge default-options options)]
+     (jdbc/execute! conn [(jdbc/create-table-ddl (:migrer/table-name opts)
                                                  [[:type "varchar(32)" "NOT NULL"]
                                                   [:version "varchar(32)" "NOT NULL"]
                                                   [:filename "varchar(512)" "UNIQUE NOT NULL"]
@@ -199,31 +204,33 @@
                                                   [:status "varchar(32) NOT NULL"]
                                                   [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
                                                  {:conditional? true})])
-     (let [table-name-str (name (:migrer/table-name options))]
+     (let [table-name-str (name (:migrer/table-name opts))]
        (jdbc/execute! conn [(str "CREATE INDEX IF NOT EXISTS "
                                  table-name-str
                                  "_type_filename_idx ON "
                                  table-name-str
-                                 " (type, filename);")]))))
+                                 " (type, filename);")])))))
 
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
 
   options is a map with any of these keys:
 
-  - `:migrer/table-name`: The name of the table where migrer will store metadata about migrations"
+  - `:migrer/table-name`: The name of the table where migrer will store metadata about migrations [\"migrations\"]
+  - `:migrer/root`: Where on the classpath migrer should look for migrations [\"migrations/\"]
+  - `:migrer/log-fn`: A function of two arguments (event, migration-map) to use for logging migration reports [`migrer.core/log-migration`]"
   ([conn]
-   (migrate! conn {:migrer/root "migrations/"
-                   :migrer/table-name :migrations}))
+   (migrate! conn default-options))
   ([conn options]
-   (reduce (fn [acc migration-map]
-             (if (= (perform-migration-sql
-                     conn
-                     (name (:migrer/table-name options))
-                     migration-map
-                     (or (:log-fn options) log-migration))
-                    :result/error)
-               (reduced acc)
-               (conj acc migration-map)))
-           []
-           (read-migration-resources (:migrer/root options) (exclusions conn) (repeatable-hashes conn)))))
+   (let [opts (merge default-options options)]
+     (reduce (fn [acc migration-map]
+               (if (= (perform-migration-sql
+                       conn
+                       (name (:migrer/table-name opts))
+                       migration-map
+                       (:log-fn opts))
+                      :result/error)
+                 (reduced acc)
+                 (conj acc migration-map)))
+             []
+             (read-migration-resources (:migrer/root opts) (exclusions conn) (repeatable-hashes conn))))))
