@@ -8,7 +8,7 @@ migrer is a simple and VCS-friendly utility for migrating databases in any JDBC-
 
 **Powerful**: migrer allows you to do anything supported by your database in your migrations, because it is not limited by a DSL layer on top of SQL.
 
-**VCS-friendly**: migrer supports the concept of *repeatable* migrations, so now your stored procedures and views no longer foil version control.
+**VCS-friendly**: migrer supports the concept of *repeatable* migrations, making it easier to see the evolution of e.g. stored procedures and views.
 
 **Small**: The sources are ~200LOC, so getting to know everything about migrer is easy!
 
@@ -55,7 +55,7 @@ CREATE TABLE users (id serial NOT NULL, name text);
 
 ## Migrations
 
-You are here because your database needs structured migrations, I hope. migrer has decided on a set of types and a sensible naming scheme for your migrations. Also, migrer eschews the idea of rolling back a migration, freeing your mind and development time from the hassle of what-ifs.
+migrer has decided on a set of types and a sensible naming scheme for your migrations. Also, migrer eschews the idea of rolling back a migration, because it believes exercising your migrations is a good way of keeping your database healthy.
 
 ### Naming scheme
 
@@ -81,7 +81,7 @@ The naming scheme is `Txxxx__abc_abc_abc.sql`:
 
 Indeed; and with good reason!
 
-In a production setting, rolling back a migration is dangerous at best, and you should never change a migration that has already hit production anyway. Should it happen that a bad migration got through your tests and QA, you are probably going to have a good time figuring out how not to lose data regardless.
+In a production setting, rolling back a migration is dangerous at best, and you should never change a migration that has already hit production anyway. Should it happen that a bad migration got through your tests and QA, you are probably going to have to figure out how not to lose data regardless of whether you have a rollback migration or not.
 
 During development, re-creating the database whenever a migration not yet in production is changed makes more sense than rolling back followed by migrating again. Using rollbacks, you are exercising your rollbacks as much as your actual migration, which is probably not what you want.
 
