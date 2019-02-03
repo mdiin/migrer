@@ -2,6 +2,9 @@
 
 migrer is a simple and VCS-friendly utility for migrating databases in any JDBC-supported RDBMS.
 
+*Alpha software*: migrer is still to be considered alpha-quality software. I have yet to test it in a project myself. Because of this, I have yet to
+release it to Clojars. If you want to try it out you should use the git-deps feature of `deps.edn`.
+
 ## Principles
 
 **Simple**: migrer considers SQL the best DSL for a SQL database.
@@ -19,15 +22,7 @@ migrer is a simple and VCS-friendly utility for migrating databases in any JDBC-
 Add the following to the dependencies map of your `deps.edn` file:
 
 ```
-{planm/migrer {:mvn/version "1.0.0"}}
-```
-
-### leiningen/boot
-
-Add the following depencency to your project file:
-
-```
-[planm/migrer "1.0.0"]
+{github-mddin/migrer {:git/url "https://github.com/mdiin/migrer" :sha "<INSERT CURRENT HEAD SHA>"}}
 ```
 
 ## Quickstart
