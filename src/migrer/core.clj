@@ -201,7 +201,7 @@
      (jdbc/execute! conn [(jdbc/create-table-ddl (:migrer/table-name opts)
                                                  [[:type "varchar(32)" "NOT NULL"]
                                                   [:version "varchar(32)" "NOT NULL"]
-                                                  [:filename "varchar(512)" "UNIQUE NOT NULL"]
+                                                  [:filename "varchar(512)" "NOT NULL"]
                                                   [:hash "varchar(256)"]
                                                   [:status "varchar(32) NOT NULL"]
                                                   [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
