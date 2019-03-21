@@ -127,13 +127,13 @@
                 (line-seq rdr)))))
 
 (defn- exclusions
-  [conn]
-  (let [performed-migrations (jdbc/query conn ["SELECT filename FROM migrations WHERE type <> 'repeatable';"])]
-    (into #{} performed-migrations)))
+  [conn table-name]
+  (let [performed-migrations (jdbc/query conn [(str "SELECT filename FROM " table-name " WHERE type <> 'repeatable';")])]
+    (into #{} (map :filename) performed-migrations)))
 
 (defn- repeatable-hashes
-  [conn]
-  (let [repeatable-hashes (jdbc/query conn ["SELECT filename, hash, performed_at AS \"performed-at\" FROM migrations WHERE type = 'repeatable';"])]
+  [conn table-name]
+  (let [repeatable-hashes (jdbc/query conn [(str "SELECT filename, hash, performed_at AS \"performed-at\" FROM " table-name " WHERE type = 'repeatable';")])]
     (into {}
           (map (fn [[filename [entry]]]
                  [filename (:hash entry)]))
@@ -154,10 +154,10 @@
              filename :migrations/filename} migration-map]
         (if (= type :repeatable)
           (jdbc/with-db-transaction [tx-conn conn]
-            (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status) VALUES (?, ?, ?, ?, 'performed')")
-                                 (name type) version filename (md5sum sql)])
             (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
-                                    filename]))
+                                    filename])
+            (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status) VALUES (?, ?, ?, ?, 'performed')")
+                                 (name type) version filename (md5sum sql)]))
           (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, status) VALUES (?, ?, ?, 'performed')")
                                (name type) version filename])))
       :result/done)
