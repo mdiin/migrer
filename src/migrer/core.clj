@@ -47,6 +47,7 @@
    [clojure.spec.alpha :as s]
    [clojure.string :as str])
   (:import
+   [org.postgresql.util PSQLException]
    [java.security MessageDigest]))
 
 (defn- compare-migration-maps
@@ -176,8 +177,9 @@
     (case event-type
       (:start) (println (str "=== " event-type " === [" type " | " description " @ " version "]"))
       (:progress) (println (:event/data event))
-      (:error) (println (str "=== " event-type " ===\n"
+      (:error) (println (str "=== ERROR REPORT ===\n\n"
                              (:event/data event)
+                             "\n\n"
                              "=== ERROR REPORT END ==="
                              "\n"))
       (:done) (println (str "=== " event-type " ===\n"
@@ -222,15 +224,36 @@
   ([conn]
    (migrate! conn default-options))
   ([conn options]
-   (let [opts (merge default-options options)]
-     (reduce (fn [acc migration-map]
-               (if (= (perform-migration-sql
-                       conn
-                       (name (:migrer/table-name opts))
-                       migration-map
-                       (:log-fn opts))
-                      :result/error)
-                 (reduced acc)
-                 (conj acc migration-map)))
-             []
-             (read-migration-resources (:migrer/root opts) (exclusions conn) (repeatable-hashes conn))))))
+   (let [opts (merge default-options options)
+         table-name (name (:migrer/table-name opts))
+         migrations (try
+                      (read-migration-resources (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name))
+                      (catch PSQLException e
+                        (if (str/includes? (ex-message e) table-name)
+                          (do
+                            (println (str "=== Database migrations table not initialized. ==="))
+                            (println "")
+                            (println (str " * Are you certain that \"" table-name "\" is the correct table?"))
+                            (println "")
+                            (println "===")
+                            ::exception)
+                          (throw e))))]
+     (cond
+       (= ::exception migrations) (println "")
+       (empty? migrations) (println "=== Database is already up to date. ===")
+       :else (do
+               (println (str "=== Performing " (count migrations) " migrations: ==="))
+               (println "")
+               (reduce (fn [acc migration-map]
+                         (if (= (perform-migration-sql
+                                 conn
+                                 table-name
+                                 migration-map
+                                 (:migrer/log-fn opts))
+                                :result/error)
+                           (reduced acc)
+                           (conj acc migration-map)))
+                       []
+                       migrations)
+               (println "")
+               (println "=== Finished! ==="))))))
