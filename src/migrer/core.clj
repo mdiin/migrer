@@ -148,7 +148,7 @@
     (let [time-start (.. (new java.util.Date) (getTime))]
       (jdbc/execute! conn [sql])
       (log-fn {:event/type :done
-               :event/data {:ms (- time-start (.. (new java.util.Date) (getTime)))}}
+               :event/data {:ms (- (.. (new java.util.Date) (getTime)) time-start)}}
               migration-map)
       (let [{type :migrations/type
              version :migrations/version
