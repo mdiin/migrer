@@ -94,7 +94,7 @@
                            "R" :repeatable)]
       #:migrations{:type migration-type
                    :filename filename
-                   :sql (read-resource (str root path))
+                   :sql (read-resource (str root "/" path))
                    :description description
                    :version version})))
 
