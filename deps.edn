@@ -1,5 +1,6 @@
 {:deps {org.clojure/java.jdbc {:mvn/version "0.7.8"}}
  :paths ["src"]
- :aliases {:test {:extra-paths ["test"]
+ :aliases {:dev {:extra-deps {org.postgresql/postgresql {:mvn/version "42.1.4"}}}
+           :test {:extra-paths ["test"]
                   :extra-deps {com.h2database/h2 {:mvn/version "1.4.197"}
                                lambdaisland/kaocha {:mvn/version "0.0-217"}}}}}
