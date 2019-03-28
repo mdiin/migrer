@@ -54,7 +54,8 @@
   [m1 m2]
   (let [{m1-version :migrations/version} m1
         {m2-version :migrations/version} m2]
-    (case [(:migrations/type m1) (:migrations/type m2)]
+    (compare m1-version m2-version)
+    #_(case [(:migrations/type m1) (:migrations/type m2)]
       [:versioned :versioned] (compare m1-version m2-version)
       [:versioned :seed] (let [comparison (compare m1-version m2-version)]
                            (if (= comparison 0) -1 comparison))
