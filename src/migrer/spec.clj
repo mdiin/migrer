@@ -28,7 +28,10 @@
 
 (s/def :migrer/reset? boolean?)
 
-(s/def ::options (s/keys :opt [:migrer/clean?]))
+(s/def ::options (s/keys :opt [:migrer/root
+                               :migrer/table-name
+                               :migrer/log-fn
+                               :migrer/use-classpath?]))
 
 (s/fdef m/init!
   :args (s/cat :conn ::jdbc/db-spec)

@@ -73,6 +73,10 @@
                                 (compare [o1 o2]
                                   (compare-migration-maps o1 o2))))
 
+(defn- read-file
+  [path]
+  (slurp path))
+
 (defn- read-resource
   [path]
   (slurp (io/resource path)))
@@ -87,7 +91,7 @@
 (defn- migration-map
   "Given a path, create a map with version and migration type extracted, and
   data slurped."
-  [root path]
+  [read-sql-fn root path]
   (let [[filename type version description] (extract-from-path path)]
     (assert (some #{"V" "R" "S"} [type]) (str "Unknown migration type: " type ". Supported types are [\"V\"ersioned \"S\"eed \"R\"epeatable]"))
     (let [migration-type (case type
@@ -96,7 +100,7 @@
                            "R" :repeatable)]
       #:migrations{:type migration-type
                    :filename filename
-                   :sql (read-resource (str root "/" path))
+                   :sql (read-sql-fn (str root "/" filename))
                    :description description
                    :version version})))
 
@@ -109,8 +113,29 @@
        (BigInteger. 1)
        (format "%032x")))
 
-(defn- read-migration-resources
-  "Returns a vector of all migrations in migration root."
+(defn- migrations-xform
+  [root exclusions repeatable-hashes read-sql-fn]
+  (comp
+   (remove exclusions)
+   (map (partial migration-map read-sql-fn root))
+   (remove (fn [{filename :migrations/filename sql :migrations/sql}]
+             (when-let [old-hash (get repeatable-hashes filename)]
+               (= old-hash (md5sum sql)))))))
+
+(defn- read-migrations-fs
+  "Returns a vector of all migrations in migration root, read from filesystem."
+  [root exclusions repeatable-hashes]
+  (let [dir-file (io/file root)]
+    (sort migration-map-comparator
+          (into []
+                (comp
+                 (filter #(not (.isDirectory %)))
+                 (map #(.getName %))
+                 (migrations-xform root exclusions repeatable-hashes read-file))
+                (.listFiles dir-file)))))
+
+(defn- read-migrations-resources
+  "Returns a vector of all migrations in migration root, read from classpath."
   {:impl-doc "Uses getResourceAsStream on the context classloader because the regular
              clojure.java.io/resource call does not handle directories. We use the
              resource stream to read the names of all resources inside a resource dir."}
@@ -121,12 +146,7 @@
                     root))]
     (sort migration-map-comparator
           (into []
-                (comp
-                 (remove exclusions)
-                 (map (partial migration-map root))
-                 (remove (fn [{filename :migrations/filename sql :migrations/sql}]
-                           (when-let [old-hash (get repeatable-hashes filename)]
-                             (= old-hash (md5sum sql))))))
+                (migrations-xform root exclusions repeatable-hashes read-resource)
                 (line-seq rdr)))))
 
 (defn- exclusions
@@ -190,6 +210,7 @@
 
 (def default-options {:migrer/root "migrations/"
                       :migrer/table-name :migrations
+                      :migrer/use-classpath? true
                       :migrer/log-fn #'log-migration})
 
 (defn init!
@@ -228,8 +249,11 @@
   ([conn options]
    (let [opts (merge default-options options)
          table-name (name (:migrer/table-name opts))
+         _ (println opts)
          migrations (try
-                      (read-migration-resources (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name))
+                      (if (:migrer/use-classpath? opts)
+                        (read-migrations-resources (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name))
+                        (read-migrations-fs (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name)))
                       (catch PSQLException e
                         (if (str/includes? (ex-message e) table-name)
                           (do
