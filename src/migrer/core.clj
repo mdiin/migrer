@@ -179,10 +179,10 @@
           (jdbc/with-db-transaction [tx-conn conn]
             (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
                                     filename])
-            (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status) VALUES (?, ?, ?, ?, 'performed')")
-                                 (name type) version filename (md5sum sql)]))
-          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, status) VALUES (?, ?, ?, 'performed')")
-                               (name type) version filename])))
+            (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status, performed_at) VALUES (?, ?, ?, ?, 'performed', ?)")
+                                 (name type) version filename (md5sum sql) (java.util.Date.)]))
+          (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, status, performed_at) VALUES (?, ?, ?, 'performed', ?)")
+                               (name type) version filename (java.util.Date.)])))
       :result/done)
     (catch Exception e
       (log-fn {:event/type :error :event/data (.getMessage e)}
@@ -211,7 +211,9 @@
 (def default-options {:migrer/root "migrations/"
                       :migrer/table-name :migrations
                       :migrer/use-classpath? true
-                      :migrer/log-fn #'log-migration})
+                      :migrer/log-fn #'log-migration
+                      :init/conditional-create-table? true
+                      :init/conditional-create-index? true})
 
 (defn init!
   "Initialise migrations metadata on database.
@@ -227,14 +229,25 @@
                                                   [:filename "varchar(512)" "NOT NULL"]
                                                   [:hash "varchar(256)"]
                                                   [:status "varchar(32) NOT NULL"]
-                                                  [:performed_at "timestamp with time zone" "NOT NULL DEFAULT now()"]]
-                                                 {:conditional? true})])
-     (let [table-name-str (name (:migrer/table-name opts))]
-       (jdbc/execute! conn [(str "CREATE INDEX IF NOT EXISTS "
-                                 table-name-str
-                                 "_type_filename_idx ON "
-                                 table-name-str
-                                 " (type, filename);")])))))
+                                                  [:performed_at "timestamp" "NOT NULL"]]
+                                                 {:conditional? (:init/conditional-create-table? opts)})])
+     (let [table-name-str (name (:migrer/table-name opts))
+           conditional? (:init/conditional-create-index? opts)
+           index-name (str table-name-str "_type_filename_idx")]
+       (jdbc/execute! conn [(if (fn? conditional?)
+                              (let [sql (str "CREATE INDEX "
+                                             index-name
+                                             " ON "
+                                             table-name-str
+                                             " (type, filename);")]
+                                (conditional? index-name sql))
+                              (str "CREATE INDEX "
+                                   (when conditional?
+                                     "IF NOT EXISTS ")
+                                   index-name
+                                   " ON "
+                                   table-name-str
+                                   " (type, filename);"))])))))
 
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
