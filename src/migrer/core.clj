@@ -180,9 +180,9 @@
             (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
                                     filename])
             (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status, performed_at) VALUES (?, ?, ?, ?, 'performed', ?)")
-                                 (name type) version filename (md5sum sql) (java.util.Date.)]))
+                                 (name type) version filename (md5sum sql) (java.sql.Date. (.getTime (java.util.Date.)))]))
           (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, status, performed_at) VALUES (?, ?, ?, 'performed', ?)")
-                               (name type) version filename (java.util.Date.)])))
+                               (name type) version filename (java.sql.Date. (.getTime (java.util.Date.)))])))
       :result/done)
     (catch Exception e
       (log-fn {:event/type :error :event/data (.getMessage e)}
