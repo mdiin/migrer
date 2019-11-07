@@ -46,6 +46,7 @@
    [clojure.java.jdbc :as jdbc]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
+   [clojure.test :as tst :refer [with-test]]
    [datascript.core :as d])
   (:import
    [java.lang Exception]
@@ -53,6 +54,7 @@
 
 (def schema
   {:migration.meta/id {:db/unique :db.unique/identity}
+   :migration.meta/description {:db/cardinality :db.cardinality/one}
    :migration.meta/version {:db/cardinality :db.cardinality/one}
    :migration.meta/dependencies {:db/cardinality :db.cardinality/many
                                  :db/valueType :db.type/ref}
@@ -65,6 +67,37 @@
    :migration.raw/dependencies {:db/cardinality :db.cardinality/many}
    :migration.raw/sql {:db/cardinality :db.cardinality/one}})
 
+(defn- lt?
+  [a b]
+  (= -1 (compare a b)))
+
+(def fact-rules
+  '[[(earlier-version ?e1 ?e2)
+     [?e1 :migration.meta/version ?e1-v]
+     [?e2 :migration.meta/version ?e2-v]
+     [(migrer.core/lt? ?e1-v ?e2-v)]]
+    [(dependency-of ?e1 ?e2)
+     [?e1 :migration.meta/dependencies ?e2]]
+    [(dependency-of ?e1 ?e3)
+     [?e2 :migration.meta/dependencies ?e3]
+     (dependency-of ?e1 ?e2)]
+    [(prior-to ?e1 ?e2)
+     (earlier-version ?e1 ?e2)]
+    [(prior-to ?e1 ?e2)
+     (dependency-of ?e2 ?e1)]
+    [(root-level? ?e ?ep)
+     [?e :migration.meta/id]
+     (not
+      (prior-to ?ep ?e)
+      (should-run? ?ep))]
+    [(should-run? ?e)
+     [?e :migration.meta/run? true]]
+    [(should-run? ?e)
+     [?e :migration.meta/type :migration.type/repeatable]
+     [?e :migration.meta/run? false]
+     (prior-to ?e-prior ?e)
+     (should-run? ?e-prior)]])
+
 (defn- initialise-facts
   [s]
   (let [conn (d/create-conn s)]
@@ -74,8 +107,6 @@
                        {:db/ident :migration.type/invalid}])
     conn))
 
-(def facts (initialise-facts schema))
-
 (comment
   (let [conn (initialise-facts schema)]
     (d/transact! conn [{:migration.meta/id "foobar"
@@ -84,44 +115,24 @@
                         :migration.meta/version "001"
                         :migration.raw/filename "V001__create_schema.sql"
                         :migration.raw/sql "create schema foobar"}
+                       {:migration.meta/id "snaz"
+                        :migration.meta/run? true
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/version "002"
+                        :migration.raw/filename "V002__create_table.sql"
+                        :migration.raw/sql "create table sometable (...);"}
                        {:migration.meta/id "bazbar"
                         :migration.meta/type :migration.type/repeatable
                         :migration.meta/run? true
                         :migration.meta/dependencies [[:migration.meta/id "foobar"]]
                         :migration.raw/filename "R__bazbar_view.sql"
                         :migration.raw/sql "create view bazbar as (...)"}])
-    (d/q '[:find ?migration ?filename
-           :where
-           #_[?migrationA :migration.meta/id ?id]
-           #_[?migrationB :migration.meta/dependencies ?migrationA]
-           [?migration :migration.meta/type :migration.type/repeatable]
-           [?migration :migration.meta/run? true]
-           [?migration :migration.raw/filename ?filename]
-           ]
-         @conn)))
 
-(defn- compare-migration-maps
-  [m1 m2]
-  (let [{m1-version :migrations/version} m1
-        {m2-version :migrations/version} m2]
-    (case [(:migrations/type m1) (:migrations/type m2)]
-      [:versioned :versioned] (compare m1-version m2-version)
-      [:versioned :seed] (let [comparison (compare m1-version m2-version)]
-                           (if (= comparison 0) -1 comparison))
-      [:versioned :repeatable] (compare m1-version m2-version)
-      [:seed :seed] (compare m1-version m2-version)
-      [:seed :versioned] (let [comparison (compare m1-version m2-version)]
-                           (if (= comparison 0) 1 comparison))
-      [:seed :repeatable] (let [comparison (compare m1-version m2-version)]
-                            (if (= comparison 0) 1 comparison))
-      [:repeatable :repeatable] (compare m1-version m2-version)
-      [:repeatable :versioned] (compare m1-version m2-version)
-      [:repeatable :seed] (let [comparison (compare m1-version m2-version)]
-                            (if (= comparison 0) -1 comparison)))))
+    (migration-eids-in-application-order @conn)
+    #_(d/touch (d/entity @conn 6))
+    )
 
-(def migration-map-comparator (proxy [java.util.Comparator] []
-                                (compare [o1 o2]
-                                  (compare-migration-maps o1 o2))))
+  )
 
 (defn- read-file
   [path]
@@ -136,23 +147,7 @@
   (-> path
       (str/split #"/")
       (last)
-      (->> (re-matches (re-pattern (str "^(\\w)(\\d+)__(.+).sql$"))))))
-
-(defn- migration-map
-  "Given a path, create a map with version and migration type extracted, and
-  data slurped."
-  [read-sql-fn root path]
-  (let [[filename type version description] (extract-from-path path)]
-    (assert (some #{"V" "R" "S"} [type]) (str "Unknown migration type: " type ". Supported types are [\"V\"ersioned \"S\"eed \"R\"epeatable]"))
-    (let [migration-type (case type
-                           "V" :versioned
-                           "S" :seed
-                           "R" :repeatable)]
-      #:migrations{:type migration-type
-                   :filename filename
-                   :sql (read-sql-fn (str root "/" filename))
-                   :description description
-                   :version version})))
+      (->> (re-matches (re-pattern (str "^(\\w)(\\d+)?__(.+).sql$"))))))
 
 (defn- md5sum
   "Attribution: https://gist.github.com/jizhang/4325757"
@@ -184,68 +179,97 @@
   )
 
 (defn- gather-facts
-  [root migration-filenames exclusions repeatable-hashes read-sql-fn]
+  [fact-db root migration-filenames exclusions repeatable-hashes read-sql-fn]
   (doseq [migration-file-path migration-filenames]
-      (let [[filename type version description] (extract-from-path migration-file-path)
-            migration-contents (read-sql-fn (str root "/" filename))
-            {:keys [dependencies id pre post sql]} (extract-meta migration-contents)]
-        (d/transact! facts [{:migration.meta/id id
-                             :migration.meta/pre pre
-                             :migration.meta/post post
-                             :migration.meta/version version
-                             :migration.meta/description description
-                             :migration.meta/run? (if (= type "R")
-                                                    (= (md5sum sql) (get repeatable-hashes filename))
-                                                    (not (some exclusions filename)))
-                             :migration.meta/type (condp = type
-                                                    "V" :migration.type/versioned
-                                                    "R" :migration.type/repeatable
-                                                    "S" :migration.type/seed
-                                                    :migration.type/invalid)
-                             :migration.raw/sql sql
-                             :migration.raw/dependencies dependencies
-                             :migration.raw/filename filename}]))))
+    (let [[filename type version path-description :as gg] (extract-from-path migration-file-path)
+          _ (println gg)
+          migration-contents (read-sql-fn (str root "/" filename))
+          {:keys [dependencies id pre post sql meta-description]} (extract-meta migration-contents)
+          doc {:migration.meta/id (or id filename)
+               :migration.meta/pre (into #{} pre)
+               :migration.meta/post (into #{} post)
+               :migration.meta/description (or meta-description path-description)
+               :migration.meta/run? (if (= type "R")
+                                      (not= (md5sum sql) (get repeatable-hashes filename))
+                                      (not (some exclusions filename)))
+               :migration.meta/type (condp = type
+                                      "V" :migration.type/versioned
+                                      "R" :migration.type/repeatable
+                                      "S" :migration.type/seed
+                                      :migration.type/invalid)
+               :migration.raw/dependencies (into #{} dependencies)
+               :migration.raw/sql sql
+               :migration.raw/filename filename}]
+      (d/transact! fact-db [(if version
+                              (merge doc {:migration.meta/version version})
+                              doc)]))))
 
-(defn- populate-dependencies
-  []
-  (let [raw-deps (d/q '[:find ?e ?deps
-                        :where
-                        [?e :migration.raw/dependencies ?deps]]
-                      @facts)
-        tx-data (map (fn [e deps]
-                       (let [deps-as-refs (map (fn [dep] [:migration.meta/id dep]))]
-                         {:db/ident e :migration.meta/dependencies deps-as-refs})))]
-    (d/transact! facts tx-data)))
+(with-test
+  (defn- populate-dependencies
+    [fact-db]
+    (let [raw-deps (d/q '[:find ?e (aggregate ?agg ?deps)
+                          :in $ ?agg
+                          :where
+                          [?e :migration.raw/dependencies ?deps]]
+                        @fact-db
+                        identity)
+          tx-data (mapcat (fn [[e deps]]
+                            (map (fn [dep]
+                                   [:db/add e
+                                    :migration.meta/dependencies [:migration.meta/id dep]])
+                                 deps))
+                       raw-deps)]
+      (d/transact! fact-db tx-data)))
+  (let [conn (initialise-facts schema)]
+    (d/transact! conn [{:migration.meta/id "R__a.sql"
+                        :migration.meta/description "foobar"
+                        :migration.meta/run? true
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.raw/dependencies #{"V001__b.sql"}
+                        :migration.raw/sql "some sql"
+                        :migration.raw/filename "R__a.sql"}
+                       {:migration.meta/id "V001__a.sql"
+                        :migration.meta/version "001"
+                        :migration.meta/description "bazbar"
+                        :migration.meta/run? true
+                        :migration.meta/type :migration.type/versioned
+                        :migration.raw/sql "some sql"
+                        :migration.raw/filename "V001__b.sql"}])
+    (tst/is (= #{2} (d/q '[:find ?d :in $ ?id :where [?e :migration.meta/id ?id] [?e :migration.meta/dependencies ?d]] @conn)))))
 
 (defn- read-migrations-fs
   "Populates fact database with metadata about all migrations in migration root, read from filesystem."
-  [root exclusions repeatable-hashes]
+  [fact-db root exclusions repeatable-hashes]
   (let [dir-file (io/file root)]
-    (gather-facts root
+    (gather-facts fact-db
+                  root
                   (into []
                         (comp
                          (filter #(not (.isDirectory %)))
                          (map #(.getName %)))
                         (.listFiles dir-file))
+                  exclusions
                   repeatable-hashes
                   read-file)
-    (populate-dependencies)))
+    (populate-dependencies fact-db)))
 
 (defn- read-migrations-resources
   "Populates fact database with metadata about all migrations in migration root, read from classpath."
   {:impl-doc "Uses getResourceAsStream on the context classloader because the regular
              clojure.java.io/resource call does not handle directories. We use the
              resource stream to read the names of all resources inside a resource dir."}
-  [root exclusions repeatable-hashes]
+  [fact-db root exclusions repeatable-hashes]
   (with-open [rdr (io/reader
                    (.getResourceAsStream
                     (.. Thread currentThread getContextClassLoader)
                     root))]
-    (gather-facts root
+    (gather-facts fact-db
+                  root
                   (line-seq rdr)
+                  exclusions
                   repeatable-hashes
                   read-resource)
-    (populate-dependencies)))
+    (populate-dependencies fact-db)))
 
 (defn- exclusions
   [conn table-name]
@@ -273,7 +297,7 @@
       (let [{type :migrations/type
              version :migrations/version
              filename :migrations/filename} migration-map]
-        (if (= type :repeatable)
+        (if (= type :migration.type/repeatable)
           (jdbc/with-db-transaction [tx-conn conn]
             (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
                                     filename])
@@ -323,7 +347,7 @@
    (let [opts (merge default-options options)]
      (jdbc/execute! conn [(jdbc/create-table-ddl (:migrer/table-name opts)
                                                  [[:type "varchar(32)" "NOT NULL"]
-                                                  [:version "varchar(32)" "NOT NULL"]
+                                                  [:version "varchar(32)"]
                                                   [:filename "varchar(512)" "NOT NULL"]
                                                   [:hash "varchar(256)"]
                                                   [:status "varchar(32) NOT NULL"]
@@ -347,6 +371,39 @@
                                    table-name-str
                                    " (type, filename);"))])))))
 
+(with-test
+ (defn dependency-order
+   [migrations]
+   (sort-by identity
+            (fn cmp [[a-id a-deps] [b-id b-deps]]
+              (cond
+                (b-deps a-id) -1
+                (a-deps b-id) 1
+                :else (compare a-id b-id)))
+            migrations))
+  (tst/is (= (list [1 #{}] [2 #{1}])
+             (dependency-order (list [2 #{1}] [1 #{}]))))
+  (tst/is (= (list [6 #{}] [7 #{6}] [8 #{7}] [9 #{8}] [10 #{9}] [11 #{10}])
+             (dependency-order (list [7 #{6}] [10 #{9}] [6 #{}] [8 #{7}] [11 #{10}] [9 #{8}])))))
+
+(defn- migration-eids-in-application-order
+  [all-facts]
+  (dependency-order
+   (d/q '[:find ?e (aggregate ?agg ?e-dep)
+          :in $ % ?agg
+          :where
+          (or
+           (and
+            (should-run? ?e)
+            (root-level? ?e ?e-dep))
+           (and
+            (should-run? ?e)
+            (prior-to ?e-dep ?e)
+            (should-run? ?e-dep)))]
+        all-facts
+        fact-rules
+        #(into #{} (filter (comp not nil?)) %))))
+
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
 
@@ -360,37 +417,50 @@
   ([conn options]
    (let [opts (merge default-options options)
          table-name (name (:migrer/table-name opts))
+         fact-db (initialise-facts schema)
          _ (println opts)
-         migrations (try
-                      (if (:migrer/use-classpath? opts)
-                        (read-migrations-resources (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name))
-                        (read-migrations-fs (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name)))
-                      (catch Exception e
-                        (if (str/includes? (ex-message e) table-name)
-                          (do
-                            (println (str "=== Database migrations table not initialized. ==="))
-                            (println "")
-                            (println (str " * Are you certain that \"" table-name "\" is the correct table?"))
-                            (println "")
-                            (println "===")
-                            ::exception)
-                          (throw e))))]
+         gather-facts-result (try
+                               (if (:migrer/use-classpath? opts)
+                                 (read-migrations-resources fact-db (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name))
+                                 (read-migrations-fs fact-db (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name)))
+                               (catch Exception e
+                                 (let [ex-msg (ex-message e)]
+                                   (if (and ex-msg (str/includes? ex-msg table-name))
+                                     (do
+                                       (println (str "=== Database migrations table not initialized. ==="))
+                                       (println "")
+                                       (println (str " * Are you certain that \"" table-name "\" is the correct table?"))
+                                       (println "")
+                                       (println "===")
+                                       ::exception)
+                                     (throw e)))))
+         all-facts (deref fact-db)
+         migration-eids (migration-eids-in-application-order all-facts)
+         _ (println migration-eids)]
      (cond
-       (= ::exception migrations) (println "")
-       (empty? migrations) (println "=== Database is already up to date. ===")
+       (= ::exception gather-facts-result) (println "")
+       (empty? migration-eids) (println "=== Database is already up to date. ===")
        :else (do
-               (println (str "=== Performing " (count migrations) " migrations: ==="))
+               (println (str "=== Performing " (count migration-eids) " migrations: ==="))
                (println "")
-               (reduce (fn [acc migration-map]
-                         (if (= (perform-migration-sql
-                                 conn
-                                 table-name
-                                 migration-map
-                                 (:migrer/log-fn opts))
-                                :result/error)
-                           (reduced acc)
-                           (conj acc migration-map)))
+               (reduce (fn [acc [migration-eid _]]
+                         (let [entity (d/entity all-facts migration-eid)
+                               migration-type (:db/ident (d/entity all-facts (get-in entity [:migration.meta/type :db/id])))
+                               migration-map {:migrations/type migration-type
+                                              :migrations/filename (:migration.raw/filename entity)
+                                              :migrations/sql (:migration.raw/sql entity)
+                                              :migrations/description (:migration.meta/description entity)
+                                              :migrations/version (:migration.meta/version entity)}]
+                           (println migration-map)
+                           (if (= (perform-migration-sql
+                                   conn
+                                   table-name
+                                   migration-map
+                                   (:migrer/log-fn opts))
+                                  :result/error)
+                             (reduced acc)
+                             (conj acc migration-map))))
                        []
-                       migrations)
+                       migration-eids)
                (println "")
                (println "=== Finished! ==="))))))

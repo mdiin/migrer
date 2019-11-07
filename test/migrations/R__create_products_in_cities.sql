@@ -1,3 +1,4 @@
+{:dependencies #{"V005__add_city_to_products.sql"}}
 CREATE OR REPLACE VIEW products_in_cities AS (
   SELECT
     p.id,
