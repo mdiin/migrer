@@ -45,10 +45,60 @@
    [clojure.java.io :as io]
    [clojure.java.jdbc :as jdbc]
    [clojure.spec.alpha :as s]
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [datascript.core :as d])
   (:import
-   [org.postgresql.util PSQLException]
+   [java.lang Exception]
    [java.security MessageDigest]))
+
+(def schema
+  {:migration.meta/id {:db/unique :db.unique/identity}
+   :migration.meta/version {:db/cardinality :db.cardinality/one}
+   :migration.meta/dependencies {:db/cardinality :db.cardinality/many
+                                 :db/valueType :db.type/ref}
+   :migration.meta/pre {:db/cardinality :db.cardinality/many}
+   :migration.meta/post {:db/cardinality :db.cardinality/many}
+   :migration.meta/run? {:db/cardinality :db.cardinality/one}
+   :migration.meta/type {:db/cardinality :db.cardinality/one
+                         :db/valueType :db.type/ref}
+   :migration.raw/filename {:db/cardinality :db.cardinality/one}
+   :migration.raw/dependencies {:db/cardinality :db.cardinality/many}
+   :migration.raw/sql {:db/cardinality :db.cardinality/one}})
+
+(defn- initialise-facts
+  [s]
+  (let [conn (d/create-conn s)]
+    (d/transact! conn [{:db/ident :migration.type/versioned}
+                       {:db/ident :migration.type/repeatable}
+                       {:db/ident :migration.type/seed}
+                       {:db/ident :migration.type/invalid}])
+    conn))
+
+(def facts (initialise-facts schema))
+
+(comment
+  (let [conn (initialise-facts schema)]
+    (d/transact! conn [{:migration.meta/id "foobar"
+                        :migration.meta/run? false
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/version "001"
+                        :migration.raw/filename "V001__create_schema.sql"
+                        :migration.raw/sql "create schema foobar"}
+                       {:migration.meta/id "bazbar"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "foobar"]]
+                        :migration.raw/filename "R__bazbar_view.sql"
+                        :migration.raw/sql "create view bazbar as (...)"}])
+    (d/q '[:find ?migration ?filename
+           :where
+           #_[?migrationA :migration.meta/id ?id]
+           #_[?migrationB :migration.meta/dependencies ?migrationA]
+           [?migration :migration.meta/type :migration.type/repeatable]
+           [?migration :migration.meta/run? true]
+           [?migration :migration.raw/filename ?filename]
+           ]
+         @conn)))
 
 (defn- compare-migration-maps
   [m1 m2]
@@ -113,29 +163,76 @@
        (BigInteger. 1)
        (format "%032x")))
 
-(defn- migrations-xform
-  [root exclusions repeatable-hashes read-sql-fn]
-  (comp
-   (remove exclusions)
-   (map (partial migration-map read-sql-fn root))
-   (remove (fn [{filename :migrations/filename sql :migrations/sql}]
-             (when-let [old-hash (get repeatable-hashes filename)]
-               (= old-hash (md5sum sql)))))))
+(defn- extract-meta
+  "Extract metadata from the lines of an SQL file.
+
+  Any metadata must be specified as a single EDN map at the top of the file."
+  [sql]
+  (with-open [string-reader (java.io.StringReader. sql)
+              edn-reader (java.io.PushbackReader. string-reader)]
+    (let [metadata (clojure.edn/read edn-reader)
+          sql (clojure.string/join "\n" (line-seq (clojure.java.io/reader string-reader)))]
+      (if (map? metadata)
+        (merge metadata {:sql sql})
+        {:sql (str metadata " " sql)}))))
+
+(comment
+  (extract-meta "create table foobar (t boolean);")
+  (extract-meta "{:id \"abc\"}\ncreate table foobar (t boolean);")
+  (extract-meta "-- whatever vomment\n-- more comment\ncreate table foobar (t boolean);")
+  (extract-meta "-- whatever vomment\n-- more comment\ncreate table foobar\n(\nt boolean\n);")
+  )
+
+(defn- gather-facts
+  [root migration-filenames exclusions repeatable-hashes read-sql-fn]
+  (doseq [migration-file-path migration-filenames]
+      (let [[filename type version description] (extract-from-path migration-file-path)
+            migration-contents (read-sql-fn (str root "/" filename))
+            {:keys [dependencies id pre post sql]} (extract-meta migration-contents)]
+        (d/transact! facts [{:migration.meta/id id
+                             :migration.meta/pre pre
+                             :migration.meta/post post
+                             :migration.meta/version version
+                             :migration.meta/description description
+                             :migration.meta/run? (if (= type "R")
+                                                    (= (md5sum sql) (get repeatable-hashes filename))
+                                                    (not (some exclusions filename)))
+                             :migration.meta/type (condp = type
+                                                    "V" :migration.type/versioned
+                                                    "R" :migration.type/repeatable
+                                                    "S" :migration.type/seed
+                                                    :migration.type/invalid)
+                             :migration.raw/sql sql
+                             :migration.raw/dependencies dependencies
+                             :migration.raw/filename filename}]))))
+
+(defn- populate-dependencies
+  []
+  (let [raw-deps (d/q '[:find ?e ?deps
+                        :where
+                        [?e :migration.raw/dependencies ?deps]]
+                      @facts)
+        tx-data (map (fn [e deps]
+                       (let [deps-as-refs (map (fn [dep] [:migration.meta/id dep]))]
+                         {:db/ident e :migration.meta/dependencies deps-as-refs})))]
+    (d/transact! facts tx-data)))
 
 (defn- read-migrations-fs
-  "Returns a vector of all migrations in migration root, read from filesystem."
+  "Populates fact database with metadata about all migrations in migration root, read from filesystem."
   [root exclusions repeatable-hashes]
   (let [dir-file (io/file root)]
-    (sort migration-map-comparator
-          (into []
-                (comp
-                 (filter #(not (.isDirectory %)))
-                 (map #(.getName %))
-                 (migrations-xform root exclusions repeatable-hashes read-file))
-                (.listFiles dir-file)))))
+    (gather-facts root
+                  (into []
+                        (comp
+                         (filter #(not (.isDirectory %)))
+                         (map #(.getName %)))
+                        (.listFiles dir-file))
+                  repeatable-hashes
+                  read-file)
+    (populate-dependencies)))
 
 (defn- read-migrations-resources
-  "Returns a vector of all migrations in migration root, read from classpath."
+  "Populates fact database with metadata about all migrations in migration root, read from classpath."
   {:impl-doc "Uses getResourceAsStream on the context classloader because the regular
              clojure.java.io/resource call does not handle directories. We use the
              resource stream to read the names of all resources inside a resource dir."}
@@ -144,10 +241,11 @@
                    (.getResourceAsStream
                     (.. Thread currentThread getContextClassLoader)
                     root))]
-    (sort migration-map-comparator
-          (into []
-                (migrations-xform root exclusions repeatable-hashes read-resource)
-                (line-seq rdr)))))
+    (gather-facts root
+                  (line-seq rdr)
+                  repeatable-hashes
+                  read-resource)
+    (populate-dependencies)))
 
 (defn- exclusions
   [conn table-name]
