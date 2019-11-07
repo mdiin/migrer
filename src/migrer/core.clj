@@ -267,7 +267,7 @@
                       (if (:migrer/use-classpath? opts)
                         (read-migrations-resources (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name))
                         (read-migrations-fs (:migrer/root opts) (exclusions conn table-name) (repeatable-hashes conn table-name)))
-                      (catch PSQLException e
+                      (catch Exception e
                         (if (str/includes? (ex-message e) table-name)
                           (do
                             (println (str "=== Database migrations table not initialized. ==="))
