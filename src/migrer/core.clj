@@ -11,14 +11,15 @@
 
   CREATE TABLE public.users (id serial NOT NULL, name text NOT NULL, email text);
 
-  - File `V002__seed_users_table.sql` containing:
+  - File `S__seed_users_table.sql` containing:
 
+  {:dependencies #{\"V001__create_users_table.sql\"}}
   INSERT INTO public.users (name, email)
   VALUES
     ('John Doe', NULL),
     ('Jane Dizzle', 'jd@example.com');
 
-  - File `R001__users_with_email.sql` containing:
+  - File `R__users_with_email.sql` containing:
 
   {:dependencies #{\"V001__create_users_table.sql\"}}
   CREATE OR REPLACE VIEW public.users_with_email AS (
@@ -30,8 +31,11 @@
   means the order is:
 
   1. V001__create_users_table.sql
-  2. R__users_with_eamil.sql
-  3. V002__seed_users_table.sql
+  2. R__users_with_email.sql
+  3. S__seed_users_table.sql
+
+  Note: The order of 2. and 3. is undefined because they have the same number of
+  dependencies.
 
   (require 'migrer.core)
   (def jdbc-connection-map {...}) ;; See clojure.java.jdbc docs
@@ -96,7 +100,16 @@
       (prior-to ?ep ?e)
       (should-run? ?ep))]
     [(should-run? ?e)
+     (or
+      [?e :migration.meta/type :migration.type/versioned]
+      [?e :migration.meta/type :migration.type/repeatable])
      [?e :migration.meta/run? true]]
+    [(should-run? ?e)
+     [?e :migration.meta/type :migration.type/seed]
+     [?e :migration.meta/run? true]
+     [?e :migration.meta/dependencies ?edep]
+     (not
+      [(nil? ?edep)])]
     [(should-run? ?e)
      [?e :migration.meta/type :migration.type/repeatable]
      [?e :migration.meta/run? false]
@@ -132,6 +145,8 @@
              (extract-from-path "V999__foobar.sql")))
   (tst/is (= ["R__do_repeatable_magic.sql" "R" nil "do_repeatable_magic"]
              (extract-from-path "R__do_repeatable_magic.sql")))
+  (tst/is (= ["S__seed_some_stuff.sql" "S" nil "seed_some_stuff"]
+             (extract-from-path "S__seed_some_stuff.sql")))
   (tst/is (= nil
              (extract-from-path "onetwothree.sql")))
   (tst/is (= nil
@@ -207,7 +222,8 @@
     (let [raw-deps (d/q '[:find ?e (aggregate ?agg ?deps)
                           :in $ ?agg
                           :where
-                          [?e :migration.raw/dependencies ?deps]]
+                          [?e :migration.raw/dependencies ?deps]
+                          [?ep :migration.meta/id ?deps]]
                         @fact-db
                         identity)
           tx-data (mapcat (fn [[e deps]]
@@ -216,6 +232,8 @@
                                     :migration.meta/dependencies [:migration.meta/id dep]])
                                  deps))
                        raw-deps)]
+      (println raw-deps)
+      (println tx-data)
       (d/transact! fact-db tx-data)))
 
   (let [conn (initialise-facts schema)]
@@ -276,7 +294,9 @@
                   exclusions
                   repeatable-hashes
                   read-resource)
-    (populate-dependencies fact-db)))
+    (println "bafore pop")
+    (populate-dependencies fact-db)
+    (println "after")))
 
 (defn- exclusions
   [conn table-name]
@@ -384,6 +404,8 @@
    (sort-by identity
             (fn cmp [[a-id a-deps] [b-id b-deps]]
               (cond
+                (empty? a-deps) -1
+                (empty? b-deps) 1
                 (b-deps a-id) -1
                 (a-deps b-id) 1
                 :else (compare a-id b-id)))
@@ -392,7 +414,9 @@
   (tst/is (= (list [1 #{}] [2 #{1}])
              (dependency-order (list [2 #{1}] [1 #{}]))))
   (tst/is (= (list [6 #{}] [7 #{6}] [8 #{7}] [9 #{8}] [10 #{9}] [11 #{10}])
-             (dependency-order (list [7 #{6}] [10 #{9}] [6 #{}] [8 #{7}] [11 #{10}] [9 #{8}])))))
+             (dependency-order (list [7 #{6}] [10 #{9}] [6 #{}] [8 #{7}] [11 #{10}] [9 #{8}]))))
+  (tst/is (= (list [8 #{}] [9 #{8}] [6 #{9}] [10 #{9}] [5 #{10}] [7 #{8}] [11 #{10}])
+             (dependency-order (list [9 #{8}] [6 #{9}] [10 #{9}] [5 #{10}] [8 #{}] [7 #{8}] [11 #{10}])))))
 
 (with-test
   (defn migration-eids-in-application-order
@@ -431,9 +455,20 @@
                         :migration.meta/run? true
                         :migration.meta/dependencies [[:migration.meta/id "foobar"]]
                         :migration.raw/filename "R__bazbar_view.sql"
-                        :migration.raw/sql "create view bazbar as (...)"}])
+                        :migration.raw/sql "create view bazbar as (...)"}
+                       {:migration.meta/id "S__seed_table.sql"
+                        :migration.meta/type :migration.type/seed
+                        :migration.meta/run? true
+                        :migration.raw/filename "S__seed_table.sql"
+                        :migration.raw/sql "insert into sometable (...) values (...);"}
+                       {:migration.meta/id "S__seed_sometable.sql"
+                        :migration.meta/type :migration.type/seed
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "snaz"]]
+                        :migration.raw/filename "S__seed_sometable.sql"
+                        :migration.raw/sql "insert into sometable (...) values (...);"}])
 
-    (tst/is (= ["snaz" "bazbar"]
+    (tst/is (= ["snaz" "bazbar" "S__seed_sometable.sql"]
                (map
                 (comp :migration.meta/id
                       (partial d/entity @conn)
@@ -471,6 +506,7 @@
                                        ::exception)
                                      (throw e)))))
          all-facts (deref fact-db)
+         _ (println "foobar")
          migration-eids (migration-eids-in-application-order all-facts)
          _ (println migration-eids)]
      (cond
