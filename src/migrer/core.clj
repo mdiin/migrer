@@ -112,33 +112,6 @@
                        {:db/ident :migration.type/invalid}])
     conn))
 
-(comment
-  (let [conn (initialise-facts schema)]
-    (d/transact! conn [{:migration.meta/id "foobar"
-                        :migration.meta/run? false
-                        :migration.meta/type :migration.type/versioned
-                        :migration.meta/version "001"
-                        :migration.raw/filename "V001__create_schema.sql"
-                        :migration.raw/sql "create schema foobar"}
-                       {:migration.meta/id "snaz"
-                        :migration.meta/run? true
-                        :migration.meta/type :migration.type/versioned
-                        :migration.meta/version "002"
-                        :migration.raw/filename "V002__create_table.sql"
-                        :migration.raw/sql "create table sometable (...);"}
-                       {:migration.meta/id "bazbar"
-                        :migration.meta/type :migration.type/repeatable
-                        :migration.meta/run? true
-                        :migration.meta/dependencies [[:migration.meta/id "foobar"]]
-                        :migration.raw/filename "R__bazbar_view.sql"
-                        :migration.raw/sql "create view bazbar as (...)"}])
-
-    (migration-eids-in-application-order @conn)
-    #_(d/touch (d/entity @conn 6))
-    )
-
-  )
-
 (defn- read-file
   [path]
   (slurp path))
@@ -147,12 +120,24 @@
   [path]
   (slurp (io/resource path)))
 
-(defn- extract-from-path
-  [path]
-  (-> path
-      (str/split #"/")
-      (last)
-      (->> (re-matches (re-pattern (str "^(\\w)(\\d+)?__(.+).sql$"))))))
+(with-test
+  (defn extract-from-path
+    [path]
+    (-> path
+        (str/split #"/")
+        (last)
+        (->> (re-matches (re-pattern (str "^(\\w)(\\d+)?__(.+).sql$"))))))
+
+  (tst/is (= ["V999__foobar.sql" "V" "999" "foobar"]
+             (extract-from-path "V999__foobar.sql")))
+  (tst/is (= ["R__do_repeatable_magic.sql" "R" nil "do_repeatable_magic"]
+             (extract-from-path "R__do_repeatable_magic.sql")))
+  (tst/is (= nil
+             (extract-from-path "onetwothree.sql")))
+  (tst/is (= nil
+             (extract-from-path "Vonehunderd__sqls.sql")))
+  (tst/is (= nil
+             (extract-from-path "Rotten__birds__view.sql"))))
 
 (defn- md5sum
   "Attribution: https://gist.github.com/jizhang/4325757"
@@ -163,31 +148,38 @@
        (BigInteger. 1)
        (format "%032x")))
 
-(defn- extract-meta
-  "Extract metadata from the lines of an SQL file.
+(with-test
+  (defn extract-meta
+    "Extract metadata from the lines of an SQL file.
 
   Any metadata must be specified as a single EDN map at the top of the file."
-  [sql]
-  (with-open [string-reader (java.io.StringReader. sql)
-              edn-reader (java.io.PushbackReader. string-reader)]
-    (let [metadata (clojure.edn/read edn-reader)
-          sql (clojure.string/join "\n" (line-seq (clojure.java.io/reader string-reader)))]
-      (if (map? metadata)
-        (merge metadata {:sql sql})
-        {:sql (str metadata " " sql)}))))
+    [sql]
+    (with-open [string-reader (java.io.StringReader. sql)
+                edn-reader (java.io.PushbackReader. string-reader)]
+      (let [metadata (clojure.edn/read edn-reader)
+            sql (clojure.string/join "\n" (line-seq (clojure.java.io/reader string-reader)))]
+        (if (map? metadata)
+          (merge metadata {:sql sql})
+          {:sql (str metadata " " sql)}))))
 
-(comment
-  (extract-meta "create table foobar (t boolean);")
-  (extract-meta "{:id \"abc\"}\ncreate table foobar (t boolean);")
-  (extract-meta "-- whatever vomment\n-- more comment\ncreate table foobar (t boolean);")
-  (extract-meta "-- whatever vomment\n-- more comment\ncreate table foobar\n(\nt boolean\n);")
-  )
+  (let [input "create table foobar (t boolean);"]
+    (tst/is (= {:sql input}
+               (extract-meta input))))
+  (let [sql "\ncreate table foobar (t boolean);"
+        input (str "{:id \"abc\"}" sql)]
+    (tst/is (= {:id "abc" :sql sql}
+               (extract-meta input))))
+  (let [input "-- whatever vomment\n-- more comment\ncreate table foobar (t boolean);"]
+    (tst/is (= {:sql input}
+               (extract-meta input))))
+  (let [input "-- whatever vomment\n-- more comment\ncreate table foobar\n(\nt boolean\n);"]
+    (tst/is (= {:sql input}
+               (extract-meta input)))))
 
 (defn- gather-facts
   [fact-db root migration-filenames exclusions repeatable-hashes read-sql-fn]
   (doseq [migration-file-path migration-filenames]
     (let [[filename type version path-description :as gg] (extract-from-path migration-file-path)
-          _ (println gg)
           migration-contents (read-sql-fn (str root "/" filename))
           {:keys [dependencies id pre post sql meta-description]} (extract-meta migration-contents)
           doc {:migration.meta/id (or id filename)
@@ -210,7 +202,7 @@
                               doc)]))))
 
 (with-test
-  (defn- populate-dependencies
+  (defn populate-dependencies
     [fact-db]
     (let [raw-deps (d/q '[:find ?e (aggregate ?agg ?deps)
                           :in $ ?agg
@@ -225,12 +217,13 @@
                                  deps))
                        raw-deps)]
       (d/transact! fact-db tx-data)))
+
   (let [conn (initialise-facts schema)]
     (d/transact! conn [{:migration.meta/id "R__a.sql"
                         :migration.meta/description "foobar"
                         :migration.meta/run? true
                         :migration.meta/type :migration.type/repeatable
-                        :migration.raw/dependencies #{"V001__b.sql"}
+                        :migration.raw/dependencies #{"V001__a.sql"}
                         :migration.raw/sql "some sql"
                         :migration.raw/filename "R__a.sql"}
                        {:migration.meta/id "V001__a.sql"
@@ -239,8 +232,17 @@
                         :migration.meta/run? true
                         :migration.meta/type :migration.type/versioned
                         :migration.raw/sql "some sql"
-                        :migration.raw/filename "V001__b.sql"}])
-    (tst/is (= #{2} (d/q '[:find ?d :in $ ?id :where [?e :migration.meta/id ?id] [?e :migration.meta/dependencies ?d]] @conn)))))
+                        :migration.raw/filename "V001__a.sql"}])
+    (populate-dependencies conn)
+    (tst/is (= "V001__a.sql"
+               (d/q '[:find ?did .
+                      :in $ ?id
+                      :where
+                      [?e :migration.meta/id ?id]
+                      [?e :migration.meta/dependencies ?d]
+                      [?d :migration.meta/id ?did]]
+                    @conn
+                    "R__a.sql")))))
 
 (defn- read-migrations-fs
   "Populates fact database with metadata about all migrations in migration root, read from filesystem."
@@ -386,28 +388,57 @@
                 (a-deps b-id) 1
                 :else (compare a-id b-id)))
             migrations))
+
   (tst/is (= (list [1 #{}] [2 #{1}])
              (dependency-order (list [2 #{1}] [1 #{}]))))
   (tst/is (= (list [6 #{}] [7 #{6}] [8 #{7}] [9 #{8}] [10 #{9}] [11 #{10}])
              (dependency-order (list [7 #{6}] [10 #{9}] [6 #{}] [8 #{7}] [11 #{10}] [9 #{8}])))))
 
-(defn- migration-eids-in-application-order
-  [all-facts]
-  (dependency-order
-   (d/q '[:find ?e (aggregate ?agg ?e-dep)
-          :in $ % ?agg
-          :where
-          (or
-           (and
-            (should-run? ?e)
-            (root-level? ?e ?e-dep))
-           (and
-            (should-run? ?e)
-            (prior-to ?e-dep ?e)
-            (should-run? ?e-dep)))]
-        all-facts
-        fact-rules
-        #(into #{} (filter (comp not nil?)) %))))
+(with-test
+  (defn migration-eids-in-application-order
+    [all-facts]
+    (dependency-order
+     (d/q '[:find ?e (aggregate ?agg ?e-dep)
+            :in $ % ?agg
+            :where
+            (or
+             (and
+              (should-run? ?e)
+              (root-level? ?e ?e-dep))
+             (and
+              (should-run? ?e)
+              (prior-to ?e-dep ?e)
+              (should-run? ?e-dep)))]
+          all-facts
+          fact-rules
+          #(into #{} (filter (comp not nil?)) %))))
+
+  (let [conn (initialise-facts schema)]
+    (d/transact! conn [{:migration.meta/id "foobar"
+                        :migration.meta/run? false
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/version "001"
+                        :migration.raw/filename "V001__create_schema.sql"
+                        :migration.raw/sql "create schema foobar"}
+                       {:migration.meta/id "snaz"
+                        :migration.meta/run? true
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/version "002"
+                        :migration.raw/filename "V002__create_table.sql"
+                        :migration.raw/sql "create table sometable (...);"}
+                       {:migration.meta/id "bazbar"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "foobar"]]
+                        :migration.raw/filename "R__bazbar_view.sql"
+                        :migration.raw/sql "create view bazbar as (...)"}])
+
+    (tst/is (= ["snaz" "bazbar"]
+               (map
+                (comp :migration.meta/id
+                      (partial d/entity @conn)
+                      first)
+                (migration-eids-in-application-order @conn))))))
 
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
