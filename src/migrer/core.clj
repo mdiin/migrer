@@ -11,7 +11,7 @@
 
   CREATE TABLE public.users (id serial NOT NULL, name text NOT NULL, email text);
 
-  - File `S001__seed_users_table.sql` containing:
+  - File `V002__seed_users_table.sql` containing:
 
   INSERT INTO public.users (name, email)
   VALUES
@@ -20,19 +20,24 @@
 
   - File `R001__users_with_email.sql` containing:
 
+  {:dependencies #{\"V001__create_users_table.sql\"}}
   CREATE OR REPLACE VIEW public.users_with_email AS (
     SELECT * FROM public.users WHERE email IS NOT NULL
   );
 
-  The following code will run the migrations in sequence order, applying first the V
-  migrations with any S migrations with the same sequence number interleaved, and
-  finally the R migrations in sequence order.
+  The following code will run the migrations in dependency order, i.e. lower
+  sequence numbers first, and their dependents second. In this example, that
+  means the order is:
+
+  1. V001__create_users_table.sql
+  2. R__users_with_eamil.sql
+  3. V002__seed_users_table.sql
 
   (require 'migrer.core)
   (def jdbc-connection-map {...}) ;; See clojure.java.jdbc docs
   (migrer.core/migrate! jdbc-connection-map) ;; => [\"migrations/V001__create_users_table.sql\"
-                                                   \"migrations/S001__seed_users_table.sql\"
-                                                   \"migrations/R001__users_with_email.sql\"]
+                                                   \"migrations/V001__seed_users_table.sql\"
+                                                   \"migrations/R__users_with_email.sql\"]
 
   After this the database will contain the entities specified in the migrations,
   and a special table `migrer.migrations` containing a record of each applied migration
