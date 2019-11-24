@@ -1,19 +1,25 @@
 # migrer
 
-migrer is a simple and VCS-friendly utility for migrating databases in any JDBC-supported RDBMS.
+migrer is a simple and VCS-friendly utility for migrating databases in any
+JDBC-supported RDBMS.
 
-*Alpha software*: migrer is still to be considered alpha-quality software. I have yet to test it in a project myself. Because of this, I have yet to
-release it to Clojars. If you want to try it out you should use the git-deps feature of `deps.edn`.
+*Alpha software*: migrer is still to be considered alpha-quality software.
+Breaking changes to the API may occur. Because of this, I have yet to release it
+to Clojars. If you want to try it out you should use the git-deps feature of
+`deps.edn`.
 
 ## Principles
 
 **Simple**: migrer considers SQL the best DSL for a SQL database.
 
-**Powerful**: migrer allows you to do anything supported by your database in your migrations, because it is not limited by a DSL layer on top of SQL.
+**Powerful**: migrer allows you to do anything supported by your database in
+your migrations, because it is not limited by a DSL layer on top of SQL.
 
-**VCS-friendly**: migrer supports the concept of *repeatable* migrations, making it easier to see the evolution of e.g. stored procedures and views.
+**VCS-friendly**: migrer supports the concept of *repeatable* migrations, making
+it easier to see the evolution of e.g. stored procedures and views.
 
-**Small**: The sources are ~200LOC, so getting to know everything about migrer is easy!
+**Small**: The sources are ~400LOC including tests, so getting to know
+everything about migrer is easy!
 
 ## Installation
 
@@ -31,7 +37,8 @@ For the impatient among us:
 
 1. Add `resources` to your projects classpath
 2. Create the directory `resources/migrations`
-3. Create the file `resources/migrations/V001__create_users_table.sql` with the following contents:
+3. Create the file `resources/migrations/V001__create_users_table.sql` with the
+   following contents:
 
 ```SQL
 CREATE TABLE users (id serial NOT NULL, name text);
@@ -50,45 +57,77 @@ CREATE TABLE users (id serial NOT NULL, name text);
 
 ## Migrations
 
-migrer has decided on a set of types and a sensible naming scheme for your migrations. Also, migrer eschews the idea of rolling back a migration, because it believes exercising your migrations is a good way of keeping your database healthy.
+migrer has decided on a set of types and a sensible naming scheme for your
+migrations. Also, migrer eschews the idea of rolling back a migration, because
+it believes exercising your migrations is a good way of keeping your database
+healthy. This is not set in stone, however, so if you feel strongly about it,
+open an issue.
 
 ### Naming scheme
 
-For migrer to help you, it needs you to name your migrations according to use and order of execution.
+For migrer to help you, it needs you to name your migrations according to use
+and order of execution.
 
 The naming scheme is `Txxxx__abc_abc_abc.sql`:
 
-- `T`: The type. Any of `V`ersioned, `S`eed, and `R`epeatable
-- `xxxx`: The version. Any string of 1 or more digits, e.g. `000`, `1`, a UNIX timestamp, etc.
-- `__`: Double underscores are significant! They separate the type and version from the description
-- `abc_abc_abc`: The description. Can be anything really, as long as you separate words by underscores
+- `T`: The type. Either `V`ersioned or `R`epeatable
+- `xxxx`: The version. Any string of 1 or more digits, e.g. `000`, `1`, a UNIX
+  timestamp, etc.
+  - Note that `R`epeatable migrations should specify their dependencies
+    explicitly, instead of depending on the version as dependency resolution
+- `__`: Double underscores are significant! They separate the type and version
+  from the description
+- `abc_abc_abc`: The description. Can be anything really, as long as you
+  separate words by underscores
 - `.sql`: Migrations are SQL files
 
 ### Migration types
 
-**Versioned** migrations contain non-repeatable DDL changes, such as creating tables, altering columns, creating indices; anything not repeatable basically.
+**Versioned** migrations contain non-repeatable DDL changes, such as creating
+tables, altering columns, creating indices; anything not repeatable basically.
 
-**Seed** migrations are similar to versioned migrations in that they contain statements that cannot (or should not) be performed more than once. This allows you to separate what your schema looks like from the rows initially in the tables. Separating versioned and seed migrations lets your different environments have different initial database row sets.
+**Seed** migrations are similar to versioned migrations in that they contain
+statements that cannot (or should not) be performed more than once. This allows
+you to separate what your schema looks like from the rows initially in the
+tables. Separating versioned and seed migrations lets your different
+environments have different initial database row sets.
 
-**Repeatable** migrations contain repeatable DDL changes, i.e. statements that will not fail regardless how many times in a row they are executed. This might be things like creating views and stored procedures (using `CREATE OR REPLACE`).
+**Repeatable** migrations contain repeatable DDL changes, i.e. statements that
+will not fail regardless how many times in a row they are executed. This might
+be things like creating views and stored procedures (using `CREATE OR REPLACE`).
 
 ### Wait, no rollbacks?
 
 Indeed; and with good reason!
 
-In a production setting, rolling back a migration is dangerous at best, and you should never change a migration that has already hit production anyway. Should it happen that a bad migration got through your tests and QA, you are probably going to have to figure out how not to lose data regardless of whether you have a rollback migration or not.
+In a production setting, rolling back a migration is dangerous at best, and you
+should never change a migration that has already hit production anyway. Should
+it happen that a bad migration got through your tests and QA, you are probably
+going to have to figure out how not to lose data regardless of whether you have
+a rollback migration or not.
 
-During development, re-creating the database whenever a migration not yet in production is changed makes more sense than rolling back followed by migrating again. Using rollbacks, you are exercising your rollbacks as much as your actual migration, which is probably not what you want.
+During development, re-creating the database whenever a migration not yet in
+production is changed makes more sense than rolling back followed by migrating
+again. Using rollbacks, you are exercising your rollbacks as much as your actual
+migration, which is probably not what you want.
+
+That being said, there can be times where you do not have control over the
+development database for whatever reason. If you are in such a situation, open
+an issue to discuss adding some kind of rollback migration or undo
+functionality.
 
 ### Execution order
 
-Migrations are performed in version order, with some additions:
+Migrations are performed in dependency order, with some additions:
 
-- Seed migrations are coupled to a Versioned migration; i.e. there can be no `S001__seed_foobar.sql` without a `V001__create_foobar.sql`
-- Seed migrations are performed immediately following the versioned migration of the same version
-- Repeatable migrations are always performed last and in the order defined by their versions
+- Seed migrations must specify at least one explicit dependency, otherwise they
+  will not execute
 
-It is possible to have multiple seed migrations for the same versioned migration, but the order of execution of the seed migrations is undefined in that case.
+Dependency order is defined as being a combination of version order and number
+of explicitly listed dependencies. When two migrations do not depend on each
+other, the migration with the fewest missing dependencies is executed first. In
+case two migrations depend on the same set of migrations, it is undefined which
+migration of the two is executed first.
 
 ## Configuration
 
