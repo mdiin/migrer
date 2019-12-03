@@ -163,25 +163,77 @@
        (BigInteger. 1)
        (format "%032x")))
 
+(defn read-comment-block-2
+  [rdr]
+  (loop [c (.read rdr)
+         cs []
+         cform nil]
+    (cond
+      (empty? cs) (if (= c \/)
+                    (recur (.read rdr) (conj cs c) nil)
+                    (.unread rdr c))
+      (= (peek cs) \/) (if (= c \*)
+                         (let [cf (clojure.edn/read rdr)]
+                           (recur (.read rdr) (conj c) cf))
+                         (.unread rdr (char-array cs) 0 (count cs)))
+      (not-empty cform) cform)))
+
+(defn read-comment-block
+  [rdr]
+  (println "read-comment-block")
+  (let [initial-chars (char-array 2)]
+    (println (str "read " (.read rdr initial-chars 0 2) " characters"))
+    (println (str "initial-chars: " (vec initial-chars)))
+    (if (= (vec initial-chars) (vec (char-array 2 [\/ \*])))
+      (let [_ (println (str "pre clojure-form"))
+            clojure-form (clojure.edn/read rdr)
+            _ (println (str "clojure form: " clojure-form))
+            final-chars (char-array 2)
+            _ (println (str "final-chars: " (vec final-chars)))]
+        (println (str "clojure-form: " clojure-form))
+        (.read rdr final-chars 0 2)
+        (println (str "final-chars: " (vec final-chars)))
+        (if (= (vec final-chars) (vec (char-array 2 [\* \/])))
+          clojure-form
+          (throw (ex-info "Initial migration form invalid" clojure-form))))
+      (do
+        (println "unreading")
+        (.unread rdr initial-chars)))))
+
+(with-test
+  (defn comment-block
+    [s]
+    (re-matches #"^(?:/\*(?s:(.+))\*/)?(?s:(.*))$" s))
+
+  (let [expected "\nfoobar\n"
+        input (str "/*" expected "*/\ncreate foobar;")]
+    (tst/is (= [input expected "\ncreate foobar;"] (comment-block input))))
+  (let  [expected  "foobar"
+         input (str "/*" expected "*/")]
+    (tst/is (= [input expected ""] (comment-block input))))
+  (let [expected "foo\nbar"
+        input (str "/*" expected "*/")]
+    (tst/is (= [input expected ""] (comment-block input))))
+  (let [input "create foobatr"]
+    (tst/is (= [input nil input] (comment-block input)))))
+
 (with-test
   (defn extract-meta
     "Extract metadata from the lines of an SQL file.
 
   Any metadata must be specified as a single EDN map at the top of the file."
     [sql]
-    (with-open [string-reader (java.io.StringReader. sql)
-                edn-reader (java.io.PushbackReader. string-reader)]
-      (let [metadata (clojure.edn/read edn-reader)
-            sql (clojure.string/join "\n" (line-seq (clojure.java.io/reader string-reader)))]
-        (if (map? metadata)
-          (merge metadata {:sql sql})
-          {:sql (str metadata " " sql)}))))
+    (let [[_ ?clj-form just-sql] (comment-block sql)
+          ?metadata (clojure.edn/read-string ?clj-form)]
+      (if (map? ?metadata)
+        (merge ?metadata {:sql just-sql})
+        {:sql sql})))
 
   (let [input "create table foobar (t boolean);"]
     (tst/is (= {:sql input}
                (extract-meta input))))
   (let [sql "\ncreate table foobar (t boolean);"
-        input (str "{:id \"abc\"}" sql)]
+        input (str "/*\n{:id \"abc\"}\n*/" sql)]
     (tst/is (= {:id "abc" :sql sql}
                (extract-meta input))))
   (let [input "-- whatever vomment\n-- more comment\ncreate table foobar (t boolean);"]
@@ -346,7 +398,7 @@
          sql :migrations/sql
          description :migrations/description} migration-map]
     (case event-type
-      (:start) (println (str "=== " event-type " === [" type " | " description " @ " version "]"))
+      (:start) (println (str "=== " event-type " === [" type " | " description (when version (str " @ " version)) "]"))
       (:progress) (println (:event/data event))
       (:error) (println (str "=== ERROR REPORT ===\n\n"
                              (:event/data event)
