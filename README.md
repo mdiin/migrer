@@ -18,8 +18,7 @@ your migrations, because it is not limited by a DSL layer on top of SQL.
 **VCS-friendly**: migrer supports the concept of *repeatable* migrations, making
 it easier to see the evolution of e.g. stored procedures and views.
 
-**Small**: The sources are ~400LOC including tests, so getting to know
-everything about migrer is easy!
+**Small**: Getting to know everything about migrer is easy!
 
 ## Installation
 
