@@ -57,6 +57,7 @@
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [clojure.test :as tst :refer [with-test]]
+   [datascript.core :as d]
    )
   (:import
    [java.lang Exception]
