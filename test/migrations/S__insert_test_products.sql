@@ -1,5 +1,5 @@
 /*
-{:dependencies #{"V001__create_products_table.sql"}}
+{:dependencies #{"V__create_products_table.sql"}}
 */
 INSERT INTO products (id, name)
 VALUES

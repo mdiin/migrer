@@ -1,5 +1,5 @@
 /*
-{:dependencies #{"V003__add_city_to_products.sql"}}
+{:dependencies #{"V__add_city_to_products.sql"}}
 */
 CREATE OR REPLACE VIEW products_in_cities AS (
   SELECT
