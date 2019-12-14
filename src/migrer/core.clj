@@ -166,19 +166,25 @@
 (with-test
   (defn comment-block
     [s]
-    (re-matches #"^(?:/\*(?s:(.+))\*/)?(?s:(.*))$" s))
+    (rest
+     (re-matches #"^(?:/\*(?s:(.+))\*/)?(?s:(.*))$" s)))
 
   (let [expected "\nfoobar\n"
         input (str "/*" expected "*/\ncreate foobar;")]
-    (tst/is (= [input expected "\ncreate foobar;"] (comment-block input))))
+    (tst/is (= [expected "\ncreate foobar;"] (comment-block input))))
   (let  [expected  "foobar"
          input (str "/*" expected "*/")]
-    (tst/is (= [input expected ""] (comment-block input))))
+    (tst/is (= [expected ""] (comment-block input))))
   (let [expected "foo\nbar"
         input (str "/*" expected "*/")]
-    (tst/is (= [input expected ""] (comment-block input))))
+    (tst/is (= [expected ""] (comment-block input))))
   (let [input "create foobatr"]
-    (tst/is (= [input nil input] (comment-block input)))))
+    (tst/is (= [nil input] (comment-block input))))
+  (let [expected "\n{:id \"abc\"}\n"
+        sql "\ncreate table foobar (t boolean);"
+        input (str "/*" expected "*/" sql)]
+    (tst/is (= [expected sql]
+               (comment-block input)))))
 
 (with-test
   (defn extract-meta
@@ -186,7 +192,7 @@
 
   Any metadata must be specified as a single EDN map at the top of the file."
     [sql]
-    (let [[_ ?clj-form just-sql] (comment-block sql)
+    (let [[?clj-form just-sql] (comment-block sql)
           ?metadata (clojure.edn/read-string ?clj-form)]
       (if (map? ?metadata)
         (merge ?metadata {:sql just-sql})
