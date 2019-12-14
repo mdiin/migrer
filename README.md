@@ -93,7 +93,7 @@ Identifiers ***must always be stable***. Do not change them. Things will break
 if you do.
 
 If no `id` key is present in the map, the migration's filename is used as
-identifier. this means that renaming migrations where the filename is the
+identifier. This means that renaming migrations where the filename is the
 identifier is not a good idea.
 
 ### Migration types
