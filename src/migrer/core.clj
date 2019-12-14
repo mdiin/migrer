@@ -190,8 +190,6 @@
                                     :migration.meta/dependencies [:migration.meta/id dep]])
                                  deps))
                        raw-deps)]
-      (println raw-deps)
-      (println tx-data)
       (d/transact! fact-db tx-data)))
 
   (let [conn (facts/initialise)]
@@ -252,9 +250,7 @@
                   exclusions
                   repeatable-hashes
                   read-resource)
-    (println "bafore pop")
-    (populate-dependencies fact-db)
-    (println "after")))
+    (populate-dependencies fact-db)))
 
 (defn- exclusions
   [conn table-name]
@@ -479,7 +475,6 @@
                                               :migrations/sql (:migration.raw/sql entity)
                                               :migrations/description (:migration.meta/description entity)
                                               :migrations/version (:migration.meta/version entity)}]
-                           (println migration-map)
                            (if (= (perform-migration-sql
                                    conn
                                    table-name
