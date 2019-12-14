@@ -51,79 +51,16 @@
   migrations and a map of options. Currently no options are available.
   "
   (:require
+   [migrer.facts :as facts]
    [clojure.java.io :as io]
    [clojure.java.jdbc :as jdbc]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [clojure.test :as tst :refer [with-test]]
-   [datascript.core :as d])
+   )
   (:import
    [java.lang Exception]
    [java.security MessageDigest]))
-
-(def schema
-  {:migration.meta/id {:db/unique :db.unique/identity}
-   :migration.meta/description {:db/cardinality :db.cardinality/one}
-   :migration.meta/version {:db/cardinality :db.cardinality/one}
-   :migration.meta/dependencies {:db/cardinality :db.cardinality/many
-                                 :db/valueType :db.type/ref}
-   :migration.meta/pre {:db/cardinality :db.cardinality/many}
-   :migration.meta/post {:db/cardinality :db.cardinality/many}
-   :migration.meta/run? {:db/cardinality :db.cardinality/one}
-   :migration.meta/type {:db/cardinality :db.cardinality/one
-                         :db/valueType :db.type/ref}
-   :migration.raw/filename {:db/cardinality :db.cardinality/one}
-   :migration.raw/dependencies {:db/cardinality :db.cardinality/many}
-   :migration.raw/sql {:db/cardinality :db.cardinality/one}})
-
-(defn- lt?
-  [a b]
-  (= -1 (compare a b)))
-
-(def fact-rules
-  '[[(earlier-version ?e1 ?e2)
-     [?e1 :migration.meta/version ?e1-v]
-     [?e2 :migration.meta/version ?e2-v]
-     [(migrer.core/lt? ?e1-v ?e2-v)]]
-    [(dependency-of ?e1 ?e2)
-     [?e1 :migration.meta/dependencies ?e2]]
-    [(dependency-of ?e1 ?e3)
-     [?e2 :migration.meta/dependencies ?e3]
-     (dependency-of ?e1 ?e2)]
-    [(prior-to ?e1 ?e2)
-     (earlier-version ?e1 ?e2)]
-    [(prior-to ?e1 ?e2)
-     (dependency-of ?e2 ?e1)]
-    [(root-level? ?e ?ep)
-     [?e :migration.meta/id]
-     (not
-      (prior-to ?ep ?e)
-      (should-run? ?ep))]
-    [(should-run? ?e)
-     (or
-      [?e :migration.meta/type :migration.type/versioned]
-      [?e :migration.meta/type :migration.type/repeatable])
-     [?e :migration.meta/run? true]]
-    [(should-run? ?e)
-     [?e :migration.meta/type :migration.type/seed]
-     [?e :migration.meta/run? true]
-     [?e :migration.meta/dependencies ?edep]
-     (not
-      [(nil? ?edep)])]
-    [(should-run? ?e)
-     [?e :migration.meta/type :migration.type/repeatable]
-     [?e :migration.meta/run? false]
-     (prior-to ?e-prior ?e)
-     (should-run? ?e-prior)]])
-
-(defn- initialise-facts
-  [s]
-  (let [conn (d/create-conn s)]
-    (d/transact! conn [{:db/ident :migration.type/versioned}
-                       {:db/ident :migration.type/repeatable}
-                       {:db/ident :migration.type/seed}
-                       {:db/ident :migration.type/invalid}])
-    conn))
 
 (defn- read-file
   [path]
@@ -257,7 +194,7 @@
       (println tx-data)
       (d/transact! fact-db tx-data)))
 
-  (let [conn (initialise-facts schema)]
+  (let [conn (facts/initialise)]
     (d/transact! conn [{:migration.meta/id "R__a.sql"
                         :migration.meta/description "foobar"
                         :migration.meta/run? true
@@ -455,10 +392,10 @@
               (prior-to ?e-dep ?e)
               (should-run? ?e-dep)))]
           all-facts
-          fact-rules
+          facts/rules
           #(into #{} (filter (comp not nil?)) %))))
 
-  (let [conn (initialise-facts schema)]
+  (let [conn (facts/initialise)]
     (d/transact! conn [{:migration.meta/id "foobar"
                         :migration.meta/run? false
                         :migration.meta/type :migration.type/versioned
@@ -509,7 +446,7 @@
   ([conn options]
    (let [opts (merge default-options options)
          table-name (name (:migrer/table-name opts))
-         fact-db (initialise-facts schema)
+         fact-db (facts/initialise)
          _ (println opts)
          gather-facts-result (try
                                (if (:migrer/use-classpath? opts)
@@ -527,9 +464,7 @@
                                        ::exception)
                                      (throw e)))))
          all-facts (deref fact-db)
-         _ (println "foobar")
-         migration-eids (migration-eids-in-application-order all-facts)
-         _ (println migration-eids)]
+         migration-eids (migration-eids-in-application-order all-facts)]
      (cond
        (= ::exception gather-facts-result) (println "")
        (empty? migration-eids) (println "=== Database is already up to date. ===")
