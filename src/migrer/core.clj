@@ -163,43 +163,6 @@
        (BigInteger. 1)
        (format "%032x")))
 
-(defn read-comment-block-2
-  [rdr]
-  (loop [c (.read rdr)
-         cs []
-         cform nil]
-    (cond
-      (empty? cs) (if (= c \/)
-                    (recur (.read rdr) (conj cs c) nil)
-                    (.unread rdr c))
-      (= (peek cs) \/) (if (= c \*)
-                         (let [cf (clojure.edn/read rdr)]
-                           (recur (.read rdr) (conj c) cf))
-                         (.unread rdr (char-array cs) 0 (count cs)))
-      (not-empty cform) cform)))
-
-(defn read-comment-block
-  [rdr]
-  (println "read-comment-block")
-  (let [initial-chars (char-array 2)]
-    (println (str "read " (.read rdr initial-chars 0 2) " characters"))
-    (println (str "initial-chars: " (vec initial-chars)))
-    (if (= (vec initial-chars) (vec (char-array 2 [\/ \*])))
-      (let [_ (println (str "pre clojure-form"))
-            clojure-form (clojure.edn/read rdr)
-            _ (println (str "clojure form: " clojure-form))
-            final-chars (char-array 2)
-            _ (println (str "final-chars: " (vec final-chars)))]
-        (println (str "clojure-form: " clojure-form))
-        (.read rdr final-chars 0 2)
-        (println (str "final-chars: " (vec final-chars)))
-        (if (= (vec final-chars) (vec (char-array 2 [\* \/])))
-          clojure-form
-          (throw (ex-info "Initial migration form invalid" clojure-form))))
-      (do
-        (println "unreading")
-        (.unread rdr initial-chars)))))
-
 (with-test
   (defn comment-block
     [s]
