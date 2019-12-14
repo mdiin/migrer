@@ -37,7 +37,7 @@ For the impatient among us:
 
 1. Add `resources` to your projects classpath
 2. Create the directory `resources/migrations`
-3. Create the file `resources/migrations/V001__create_users_table.sql` with the
+3. Create the file `resources/migrations/V__create_users_table.sql` with the
    following contents:
 
 ```SQL
@@ -73,8 +73,9 @@ The naming scheme is `Txxxx__abc_abc_abc.sql`:
 - `T`: The type. Either `V`ersioned or `R`epeatable
 - `xxxx`: The version. Any string of 1 or more digits, e.g. `000`, `1`, a UNIX
   timestamp, etc.
-  - Note that `R`epeatable migrations should specify their dependencies
-    explicitly, instead of depending on the version as dependency resolution
+  - Note that `V`ersioned and `R`epeatable migrations should specify their
+    dependencies explicitly, instead of depending on the version as dependency
+    resolution
 - `__`: Double underscores are significant! They separate the type and version
   from the description
 - `abc_abc_abc`: The description. Can be anything really, as long as you
