@@ -104,11 +104,11 @@
   (defn comment-block
     [s]
     (rest
-     (re-matches #"^(?:/\*(?s:(.+))\*/)?(?s:(.*))$" s)))
+     (re-matches #"^(?:/\*(?s:(.+))\*/)?\s?(?s:(.*))$" s)))
 
   (let [expected "\nfoobar\n"
         input (str "/*" expected "*/\ncreate foobar;")]
-    (tst/is (= [expected "\ncreate foobar;"] (comment-block input))))
+    (tst/is (= [expected "create foobar;"] (comment-block input))))
   (let  [expected  "foobar"
          input (str "/*" expected "*/")]
     (tst/is (= [expected ""] (comment-block input))))
@@ -118,8 +118,8 @@
   (let [input "create foobatr"]
     (tst/is (= [nil input] (comment-block input))))
   (let [expected "\n{:id \"abc\"}\n"
-        sql "\ncreate table foobar (t boolean);"
-        input (str "/*" expected "*/" sql)]
+        sql "create table foobar (t boolean);"
+        input (str "/*" expected "*/\n" sql)]
     (tst/is (= [expected sql]
                (comment-block input)))))
 
@@ -138,8 +138,8 @@
   (let [input "create table foobar (t boolean);"]
     (tst/is (= {:sql input}
                (extract-meta input))))
-  (let [sql "\ncreate table foobar (t boolean);"
-        input (str "/*\n{:id \"abc\"}\n*/" sql)]
+  (let [sql "create table foobar (t boolean);"
+        input (str "/*\n{:id \"abc\"}\n*/\n" sql)]
     (tst/is (= {:id "abc" :sql sql}
                (extract-meta input))))
   (let [input "-- whatever vomment\n-- more comment\ncreate table foobar (t boolean);"]
