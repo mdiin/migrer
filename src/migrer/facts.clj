@@ -25,7 +25,7 @@
   '[[(earlier-version ?e1 ?e2)
      [?e1 :migration.meta/version ?e1-v]
      [?e2 :migration.meta/version ?e2-v]
-     [(migrer.core/lt? ?e1-v ?e2-v)]]
+     [(migrer.facts/lt? ?e1-v ?e2-v)]]
     [(dependency-of ?e1 ?e2)
      [?e1 :migration.meta/dependencies ?e2]]
     [(dependency-of ?e1 ?e3)
