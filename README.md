@@ -147,25 +147,37 @@ migration of the two is executed first.
 
 ## Configuration
 
-Both `migrer.core/init!` and `migrer.core/migrate!` support an optional second argument used for configuration, a map with the keys:
+Both `migrer.core/init!` and `migrer.core/migrate!` support an optional second
+argument used for configuration, a map with the keys:
 
-- `:migrer/root`: Where on the classpath should migrer look for migrations? Defaults to `migrations/`
-- `:migrer/table-name`: Where should migrer store metadata about the migrations? Defaults to table `migrations`
-- `:migrer/log-fn`: How should migrer report migration progress? Defaults to `#'migrer.core/log-migration`
+- `:migrer/root`: Where on the classpath should migrer look for migrations?
+  Defaults to `migrations/`
+- `:migrer/table-name`: Where should migrer store metadata about the migrations?
+  Defaults to table `migrations`
+- `:migrer/log-fn`: How should migrer report migration progress? Defaults to
+  `#'migrer.core/log-migration`
 
 ## Authors
 
-* **Matthias Varberg Ingesman** - *Initial work* - [mdiin](https://github.com/mdiin)
+* **Matthias Varberg Ingesman** - *Initial work* -
+  [mdiin](https://github.com/mdiin)
 
-See also the list of [contributors](https://github.com/mdiin/migrer/contributors) who participated in this project.
+See also the list of
+[contributors](https://github.com/mdiin/migrer/contributors) who participated in
+this project.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details
+This project is licensed under the MIT License - see the
+[LICENSE.md](LICENSE.md) file for details
 
 ## Acknowledgments
 
-* [flyway](https://flywaydb.org/) for validating the idea of repeatable migrations
-* [pesterhazy's minimalist migration framework](https://gist.github.com/pesterhazy/9f7c0a7a9edd002759779c1732e0ac43) inspiration
-* ActiveRecord migrations for being my entry into the world of relational database migrations
+* [flyway](https://flywaydb.org/) for validating the idea of repeatable
+  migrations
+* [pesterhazy's minimalist migration
+  framework](https://gist.github.com/pesterhazy/9f7c0a7a9edd002759779c1732e0ac43)
+  inspiration
+* ActiveRecord migrations for being my entry into the world of relational
+  database migrations
 
