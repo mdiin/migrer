@@ -82,6 +82,21 @@ The naming scheme is `Txxxx__abc_abc_abc.sql`:
   separate words by underscores
 - `.sql`: Migrations are SQL files
 
+### Metadata
+
+Every migration file can start with a multiline comment containing an EDN map of
+metadata. This map can contain the keys:
+
+- `id`: The identifier to use when referencing migration in other migrations
+- `dependencies`: A set of migration identifiers on which migration depends
+
+Identifiers ***must always be stable***. Do not change them. Things will break
+if you do.
+
+If no `id` key is present in the map, the migration's filename is used as
+identifier. this means that renaming migrations where the filename is the
+identifier is not a good idea.
+
 ### Migration types
 
 **Versioned** migrations contain non-repeatable DDL changes, such as creating
