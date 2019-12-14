@@ -8,8 +8,6 @@
    :migration.meta/version {:db/cardinality :db.cardinality/one}
    :migration.meta/dependencies {:db/cardinality :db.cardinality/many
                                  :db/valueType :db.type/ref}
-   :migration.meta/pre {:db/cardinality :db.cardinality/many}
-   :migration.meta/post {:db/cardinality :db.cardinality/many}
    :migration.meta/run? {:db/cardinality :db.cardinality/one}
    :migration.meta/type {:db/cardinality :db.cardinality/one
                          :db/valueType :db.type/ref}

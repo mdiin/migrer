@@ -155,10 +155,8 @@
   (doseq [migration-file-path migration-filenames]
     (let [[filename type version path-description :as gg] (extract-from-path migration-file-path)
           migration-contents (read-sql-fn (str root "/" filename))
-          {:keys [dependencies id pre post sql meta-description]} (extract-meta migration-contents)
+          {:keys [dependencies id sql meta-description]} (extract-meta migration-contents)
           doc {:migration.meta/id (or id filename)
-               :migration.meta/pre (into #{} pre)
-               :migration.meta/post (into #{} post)
                :migration.meta/description (or meta-description path-description)
                :migration.meta/run? (if (= type "R")
                                       (not= (md5sum sql) (get repeatable-hashes filename))
