@@ -7,7 +7,7 @@
 
   With three files on the classpath under `migrations/`;
 
-  - File `V001__create_users_table.sql` containing:
+  - File `V__create_users_table.sql` containing:
 
   CREATE TABLE public.users (id serial NOT NULL, name text NOT NULL, email text);
 
