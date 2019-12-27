@@ -380,11 +380,11 @@
             :where
             (or
              (and
-              (should-run? ?e)
-              (root-level? ?e ?e-dep))
+              (root-level? ?e ?e-dep)
+              (should-run? ?e))
              (and
-              (should-run? ?e)
               (prior-to ?e-dep ?e)
+              (should-run? ?e)
               (should-run? ?e-dep)))]
           all-facts
           facts/rules
