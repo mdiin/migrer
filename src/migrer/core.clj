@@ -426,7 +426,44 @@
                 (comp :migration.meta/id
                       (partial d/entity @conn)
                       first)
-                (migration-eids-in-application-order @conn))))))
+                (migration-eids-in-application-order @conn)))
+            "Test that implicit and explicit dependencies mix."))
+
+  (let [conn (facts/initialise)]
+    (d/transact! conn [{:migration.meta/id "foobar"
+                        :migration.meta/run? false
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/version "001"
+                        :migration.raw/filename "V001__create_schema.sql"
+                        :migration.raw/sql "create schema foobar"}
+                       {:migration.meta/id "snaz"
+                        :migration.meta/run? true
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/version "002"
+                        :migration.raw/filename "V002__create_table.sql"
+                        :migration.raw/sql "create table sometable (...);"}
+                       {:migration.meta/id "S003__seed_sometable.sql"
+                        :migration.meta/version "003"
+                        :migration.meta/type :migration.type/seed
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "snaz"]]
+                        :migration.raw/filename "S__seed_sometable.sql"
+                        :migration.raw/sql "insert into sometable (...) values (...);"}
+                       {:migration.meta/id "bazbar"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/version "004"
+                        :migration.raw/filename "R004__bazbar_view.sql"
+                        :migration.raw/sql "create view bazbar as (...)"}
+                       ])
+
+    (tst/is (= ["snaz" "S003__seed_sometable.sql" "bazbar"]
+               (map
+                (comp :migration.meta/id
+                      (partial d/entity @conn)
+                      first)
+                (migration-eids-in-application-order @conn)))
+            "Test that version order is preserved (regression test for supporting old versions)")))
 
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
