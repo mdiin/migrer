@@ -1,3 +1,6 @@
+/*
+{:dependencies #{"V__add_city_to_products.sql"}}
+*/
 UPDATE products
 SET
   city_id = 1

@@ -18,13 +18,13 @@
   (fn [tests]
     (binding [test-h2-db (make-test-h2-db)]
       (m/init! test-h2-db)
+      (m/migrate! test-h2-db)
       (tests))))
 
 (deftest test-init!
   (is (jdbc/query test-h2-db ["SELECT * FROM migrations"])))
 
 (deftest migrate!
-  (is (seq (m/migrate! test-h2-db)))
   (is (every? #{{:id 1 :name "Tomato" :city_id 1}
                 {:id 2 :name "Cucumber" :city_id 2}
                 {:id 3 :name "Garlic" :city_id nil}}
