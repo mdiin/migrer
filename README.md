@@ -3,7 +3,7 @@
 migrer is a simple and VCS-friendly utility for migrating databases in any
 JDBC-supported RDBMS.
 
-*Alpha software*: migrer is still to be considered alpha-quality software.
+*Beta software*: migrer is still to be considered beta-quality software.
 Breaking changes to the API may occur. Because of this, I have yet to release it
 to Clojars. If you want to try it out you should use the git-deps feature of
 `deps.edn`.
