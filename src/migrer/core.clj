@@ -374,7 +374,27 @@
 (with-test
   (defn migration-eids-in-application-order
     [all-facts]
-    (dependency-order
+    (let [runnables (d/q '[:find ?e ?id
+                           :in $ %
+                           :where
+                           (should-run? ?e)
+                           [?e :migration.meta/id ?id]]
+                         all-facts
+                         facts/rules)
+          with-and (map (fn [[e id]]
+                          (let [runnable-ancestors (d/q '[:find [?ancestor ...]
+                                                          :in $ % ?runnable-id
+                                                          :where
+                                                          [?runnable :migration.meta/id ?runnable-id]
+                                                          (prior-to ?ancestor ?runnable)
+                                                          (should-run? ?ancestor)]
+                                                        all-facts
+                                                        facts/rules
+                                                        id)]
+                            [e (into #{} (filter (comp not nil?)) runnable-ancestors)]))
+                        runnables)]
+      (dependency-order with-and))
+    #_(dependency-order
      (d/q '[:find ?e (aggregate ?agg ?e-dep)
             :in $ % ?agg
             :where
@@ -389,6 +409,32 @@
           all-facts
           facts/rules
           #(into #{} (filter (comp not nil?)) %))))
+
+  (let [conn (facts/initialise)]
+    (doseq [version (range 1 300)
+            :let [[s t] (rand-nth [["V" :migration.type/versioned] ["R" :migration.type/repeatable]])
+                  migration (merge #:migration.meta{:id version
+                                                    :run? true
+                                                    :type t
+                                                    :version (str version)}
+                                   #:migration.raw{:filename (str s version "__some_migration.sql")
+                                                   :sql "some sql"})]]
+      (d/transact! conn [migration]))
+    (let [res (migration-eids-in-application-order @conn)]
+      (tst/is (not (empty? res)))))
+
+  (let [conn (facts/initialise)]
+    (doseq [version (range 1 60)
+            :let [[s t] (rand-nth [["V" :migration.type/versioned] ["R" :migration.type/repeatable]])
+                  migration (merge #:migration.meta{:id version
+                                                    :run? false
+                                                    :type t
+                                                    :version (str version)}
+                                   #:migration.raw{:filename (str s version "__some_migration.sql")
+                                                   :sql "some sql"})]]
+      (d/transact! conn [migration]))
+    (let [res (migration-eids-in-application-order @conn)]
+      (tst/is (empty? res))))
 
   (let [conn (facts/initialise)]
     (d/transact! conn [{:migration.meta/id "foobar"
