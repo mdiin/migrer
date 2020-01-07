@@ -79,6 +79,8 @@
         (last)
         (->> (re-matches (re-pattern (str "^(\\w)(\\d+)?__(.+).sql$"))))))
 
+  (tst/is (= ["V__foobar.sql" "V" nil "foobar"]
+             (extract-from-path "V__foobar.sql")))
   (tst/is (= ["V999__foobar.sql" "V" "999" "foobar"]
              (extract-from-path "V999__foobar.sql")))
   (tst/is (= ["R__do_repeatable_magic.sql" "R" nil "do_repeatable_magic"]
@@ -150,28 +152,48 @@
     (tst/is (= {:sql input}
                (extract-meta input)))))
 
-(defn- gather-facts
-  [fact-db root migration-filenames exclusions repeatable-hashes read-sql-fn]
-  (doseq [migration-file-path migration-filenames]
-    (let [[filename type version path-description :as gg] (extract-from-path migration-file-path)
-          migration-contents (read-sql-fn (str root "/" filename))
-          {:keys [dependencies id sql meta-description]} (extract-meta migration-contents)
-          doc {:migration.meta/id (or id filename)
-               :migration.meta/description (or meta-description path-description)
-               :migration.meta/run? (if (= type "R")
-                                      (not= (md5sum sql) (get repeatable-hashes filename))
-                                      (not (some exclusions filename)))
-               :migration.meta/type (condp = type
-                                      "V" :migration.type/versioned
-                                      "R" :migration.type/repeatable
-                                      "S" :migration.type/seed
-                                      :migration.type/invalid)
-               :migration.raw/dependencies (into #{} dependencies)
-               :migration.raw/sql sql
-               :migration.raw/filename filename}]
-      (d/transact! fact-db [(if version
-                              (merge doc {:migration.meta/version version})
-                              doc)]))))
+(with-test
+  (defn gather-facts
+    [fact-db root migration-filenames exclusions repeatable-hashes read-sql-fn]
+    (doseq [migration-file-path migration-filenames]
+      (let [[filename type version path-description :as gg] (extract-from-path migration-file-path)
+            migration-contents (read-sql-fn (str root "/" filename))
+            {:keys [dependencies id sql meta-description]} (extract-meta migration-contents)
+            doc {:migration.meta/id (or id filename)
+                 :migration.meta/description (or meta-description path-description)
+                 :migration.meta/run? (if (= type "R")
+                                        (not= (md5sum sql) (get repeatable-hashes filename))
+                                        (not (some exclusions [filename])))
+                 :migration.meta/type (condp = type
+                                        "V" :migration.type/versioned
+                                        "R" :migration.type/repeatable
+                                        "S" :migration.type/seed
+                                        :migration.type/invalid)
+                 :migration.raw/dependencies (into #{} dependencies)
+                 :migration.raw/sql sql
+                 :migration.raw/filename filename}]
+        (d/transact! fact-db [(if version
+                                (merge doc {:migration.meta/version version})
+                                doc)]))))
+
+  (let [fact-db (facts/initialise)
+        root "migrations"
+        migration-filenames ["V__foobar.sql"]
+        exclusions #{"V__foobar.sql"}
+        repeatable-hashes {}
+        read-sql-fn (fn [_] (str "/*"
+                                 "{:dependencies #{}}"
+                                 "*/"
+                                 "create table foobar();"))]
+    (gather-facts fact-db root migration-filenames exclusions repeatable-hashes read-sql-fn)
+    (tst/is (= false
+               (d/q '[:find ?run .
+                      :in $
+                      :where
+                      [?e :migration.meta/id "V__foobar.sql"]
+                      [?e :migration.meta/run? ?run]]
+                    @fact-db))
+            "Mark excluded migrations as not runnable.")))
 
 (with-test
   (defn populate-dependencies
