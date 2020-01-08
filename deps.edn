@@ -1,5 +1,6 @@
-{:deps {org.clojure/java.jdbc {:mvn/version "0.7.11"}
-        datascript {:mvn/version "0.18.8"}}
+{:deps {org.clojure/java.jdbc {:mvn/version "0.7.9"}
+        datascript {:mvn/version "0.18.8"}
+        dorothy {:mvn/version "0.0.7"}}
  :aliases {:dev {:extra-deps {org.postgresql/postgresql {:mvn/version "42.1.4"}}}
            :test {:extra-paths ["test"]
                   :extra-deps {com.h2database/h2 {:mvn/version "1.4.197"}
