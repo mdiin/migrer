@@ -56,9 +56,10 @@
    [clojure.java.jdbc :as jdbc]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
+   [clojure.set :as set]
    [clojure.test :as tst :refer [with-test]]
-   [datascript.core :as d]
-   )
+   [datascript.core :as d])
+
   (:import
    [java.lang Exception]
    [java.security MessageDigest]))
@@ -384,118 +385,266 @@
                                    " (type, filename);"))])))))
 
 (with-test
- (defn dependency-order
-   [migrations]
-   (sort-by identity
-            (fn cmp [[a-id a-deps] [b-id b-deps]]
-              (cond
-                (empty? a-deps) -1
-                (empty? b-deps) 1
-                (b-deps a-id) -1
-                (a-deps b-id) 1
-                :else (compare a-id b-id)))
-            migrations))
+  (defn find-with-wrong-dependency-specs
+    [facts]
+    (d/q '[:find ?id ?filename ?dep-name
+           :in $
+           :where
+           [?e :migration.raw/dependencies ?dep-name]
+           [?e :migration.raw/filename ?filename]
+           [?e :migration.meta/id ?id]
+           (not [_ :migration.meta/id ?dep-name])]
+         facts))
 
-  (tst/is (= (list [1 #{}] [2 #{1}])
-             (dependency-order (list [2 #{1}] [1 #{}]))))
-  (tst/is (= (list [6 #{}] [7 #{6}] [8 #{7}] [9 #{8}] [10 #{9}] [11 #{10}])
-             (dependency-order (list [7 #{6}] [10 #{9}] [6 #{}] [8 #{7}] [11 #{10}] [9 #{8}]))))
-  (tst/is (= (list [8 #{}] [9 #{8}] [6 #{9}] [10 #{9}] [5 #{10}] [7 #{8}] [11 #{10}])
-             (dependency-order (list [9 #{8}] [6 #{9}] [10 #{9}] [5 #{10}] [8 #{}] [7 #{8}] [11 #{10}])))))
+  (let [conn (facts/initialise)]
+    (d/transact! conn [{:migration.meta/id "A"}
+                       {:migration.meta/id "B"}
+                       {:migration.meta/id "C"
+                        :migration.raw/filename "C.sql"
+                        :migration.raw/dependencies #{"a"}}])
+    (tst/is (= #{["C" "C.sql" "a"]}
+               (find-with-wrong-dependency-specs
+                @conn))
+            "Wrong dependency"))
+
+  (let [conn (facts/initialise)]
+    (d/transact! conn [{:migration.meta/id "A"}
+                       {:migration.meta/id "B"}
+                       {:migration.meta/id "C"
+                        :migration.raw/filename "C.sql"
+                        :migration.raw/dependencies #{"A"}}])
+    (tst/is (= #{}
+               (find-with-wrong-dependency-specs
+                @conn))
+            "No wrong dependency")))
+
+(defn- find-all-root-migrations
+  [facts]
+  (let [res (d/q '[:find [?e ...]
+                   :in $ %
+                   :where
+                   (root-migration ?e)]
+                 facts
+                 facts/new-rules)]
+    (set res)))
+
+(defn- find-next-wave-migrations
+  [facts]
+  (let [res (d/q '[:find [?e ...]
+                   :in $ %
+                   :where
+                   (next-wave ?e)]
+                 facts
+                 facts/new-rules)]
+    (set res)))
+
+(defn- add-to-wave
+  [fact-db eids wave-num]
+  (d/transact!
+   fact-db
+   (map (fn [eid]
+          {:db/id eid
+           :migration.meta/wave wave-num})
+        eids)))
 
 (with-test
   (defn migration-eids-in-application-order
-    [all-facts]
-    (dependency-order
-     (d/q '[:find ?e (aggregate ?agg ?e-dep)
-            :in $ % ?agg
-            :where
-            (or
-             (and
-              (should-run? ?e)
-              (root-level? ?e ?e-dep))
-             (and
-              (should-run? ?e)
-              (prior-to ?e-dep ?e)
-              (should-run? ?e-dep)))]
-          all-facts
-          facts/rules
-          #(into #{} (filter (comp not nil?)) %))))
+    "Returns a vector of migration waves."
+    [fact-db]
+    (loop [waves []
+           wave (find-all-root-migrations @fact-db)]
+      (if (and (< (count waves) 10) (seq wave))
+        (do
+          (add-to-wave fact-db wave (inc (count waves)))
+          (recur
+            (conj waves wave)
+            (find-next-wave-migrations @fact-db)))
+        waves)))
 
   (let [conn (facts/initialise)]
-    (d/transact! conn [{:migration.meta/id "foobar"
-                        :migration.meta/run? false
-                        :migration.meta/type :migration.type/versioned
-                        :migration.meta/version "001"
-                        :migration.raw/filename "V001__create_schema.sql"
-                        :migration.raw/sql "create schema foobar"}
-                       {:migration.meta/id "snaz"
-                        :migration.meta/run? true
-                        :migration.meta/type :migration.type/versioned
-                        :migration.meta/version "002"
-                        :migration.raw/filename "V002__create_table.sql"
-                        :migration.raw/sql "create table sometable (...);"}
-                       {:migration.meta/id "bazbar"
+    (d/transact! conn [{:migration.meta/id "bazbar"
                         :migration.meta/type :migration.type/repeatable
                         :migration.meta/run? true
-                        :migration.meta/dependencies [[:migration.meta/id "foobar"]]
+                        :migration.meta/dependencies []
                         :migration.raw/filename "R__bazbar_view.sql"
                         :migration.raw/sql "create view bazbar as (...)"}
-                       {:migration.meta/id "S__seed_table.sql"
-                        :migration.meta/type :migration.type/seed
-                        :migration.meta/run? true
-                        :migration.raw/filename "S__seed_table.sql"
-                        :migration.raw/sql "insert into sometable (...) values (...);"}
                        {:migration.meta/id "S__seed_sometable.sql"
                         :migration.meta/type :migration.type/seed
                         :migration.meta/run? true
-                        :migration.meta/dependencies [[:migration.meta/id "snaz"]]
+                        :migration.meta/dependencies [[:migration.meta/id "bazbar"]]
                         :migration.raw/filename "S__seed_sometable.sql"
                         :migration.raw/sql "insert into sometable (...) values (...);"}])
-
-    (tst/is (= ["snaz" "bazbar" "S__seed_sometable.sql"]
+    (tst/is (= ["bazbar" "S__seed_sometable.sql"]
                (map
                 (comp :migration.meta/id
                       (partial d/entity @conn)
                       first)
-                (migration-eids-in-application-order @conn)))
-            "Test that implicit and explicit dependencies mix."))
+                (migration-eids-in-application-order conn)))))
 
   (let [conn (facts/initialise)]
-    (d/transact! conn [{:migration.meta/id "foobar"
-                        :migration.meta/run? false
-                        :migration.meta/type :migration.type/versioned
-                        :migration.meta/version "001"
-                        :migration.raw/filename "V001__create_schema.sql"
-                        :migration.raw/sql "create schema foobar"}
-                       {:migration.meta/id "snaz"
-                        :migration.meta/run? true
-                        :migration.meta/type :migration.type/versioned
-                        :migration.meta/version "002"
-                        :migration.raw/filename "V002__create_table.sql"
-                        :migration.raw/sql "create table sometable (...);"}
-                       {:migration.meta/id "S003__seed_sometable.sql"
-                        :migration.meta/version "003"
-                        :migration.meta/type :migration.type/seed
-                        :migration.meta/run? true
-                        :migration.meta/dependencies [[:migration.meta/id "snaz"]]
-                        :migration.raw/filename "S__seed_sometable.sql"
-                        :migration.raw/sql "insert into sometable (...) values (...);"}
-                       {:migration.meta/id "bazbar"
+    (d/transact! conn [{:migration.meta/id "X"
                         :migration.meta/type :migration.type/repeatable
                         :migration.meta/run? true
-                        :migration.meta/version "004"
-                        :migration.raw/filename "R004__bazbar_view.sql"
+                        :migration.meta/dependencies []
+                        :migration.raw/filename "R__bazbar_view.sql"
                         :migration.raw/sql "create view bazbar as (...)"}
-                       ])
-
-    (tst/is (= ["snaz" "S003__seed_sometable.sql" "bazbar"]
+                       {:migration.meta/id "A"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? false
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "B"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? false
+                        :migration.meta/dependencies [[:migration.meta/id "A"]
+                                                      [:migration.meta/id "X"]]}
+                       {:migration.meta/id "C"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "B"]]}
+                       {:migration.meta/id "D"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? false
+                        :migration.meta/dependencies [[:migration.meta/id "A"]
+                                                      [:migration.meta/id "X"]]}])
+    (tst/is (= [#{"X" "C"} #{"D"}]
                (map
-                (comp :migration.meta/id
-                      (partial d/entity @conn)
-                      first)
-                (migration-eids-in-application-order @conn)))
-            "Test that version order is preserved (regression test for supporting old versions)")))
+                 (fn [eids]
+                   (into #{}
+                         (map (comp :migration.meta/id
+                                    (partial d/entity @conn)))
+                         eids))
+                 (migration-eids-in-application-order conn)))
+            "Test waves."))
+
+  (let [conn (facts/initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "B"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "C"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "A"]
+                                                      [:migration.meta/id "B"]]}
+                       {:migration.meta/id "D"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "B"]]}
+                       {:migration.meta/id "E"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "A"]]}
+                       {:migration.meta/id "F"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "G"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "C"]
+                                                      [:migration.meta/id "F"]
+                                                      [:migration.meta/id "D"]]}
+                       {:migration.meta/id "H"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "G"]
+                                                      [:migration.meta/id "E"]
+                                                      [:migration.meta/id "A"]
+                                                      [:migration.meta/id "B"]]}
+                       {:migration.meta/id "I"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "A"]
+                                                      [:migration.meta/id "B"]
+                                                      [:migration.meta/id "F"]
+                                                      [:migration.meta/id "G"]]}
+                       {:migration.meta/id "J"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "B"]
+                                                      [:migration.meta/id "C"]]}
+                       {:migration.meta/id "K"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "B"]]}
+                       {:migration.meta/id "L"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "C"]
+                                                      [:migration.meta/id "F"]
+                                                      [:migration.meta/id "H"]]}])
+    (tst/is (= [#{"A" "B" "F"} #{"C" "D" "E" "K"} #{"G" "J"} #{"H" "I"} #{"L"}]
+               (map
+                 (fn [eids]
+                   (into #{}
+                         (map (comp :migration.meta/id
+                                    (partial d/entity @conn)))
+                         eids))
+                 (migration-eids-in-application-order conn)))
+            "Test waves #2."))
+
+  #_(let [conn (facts/initialise)]
+      (d/transact! conn [{:migration.meta/id "foobar"
+                          :migration.meta/run? false
+                          :migration.meta/type :migration.type/versioned
+                          :migration.meta/version 1
+                          :migration.raw/filename "V001__create_schema.sql"
+                          :migration.raw/sql "create schema foobar"}
+                         {:migration.meta/id "snaz"
+                          :migration.meta/run? true
+                          :migration.meta/type :migration.type/versioned
+                          :migration.meta/version 2
+                          :migration.raw/filename "V002__create_table.sql"
+                          :migration.raw/sql "create table sometable (...);"}
+                         {:migration.meta/id "S003__seed_sometable.sql"
+                          :migration.meta/version 3
+                          :migration.meta/type :migration.type/seed
+                          :migration.meta/run? true
+                          :migration.raw/filename "S003__seed_sometable.sql"
+                          :migration.raw/sql "insert into sometable (...) values (...);"}
+                         {:migration.meta/id "bazbar"
+                          :migration.meta/type :migration.type/repeatable
+                          :migration.meta/run? true
+                          :migration.meta/version 4
+                          :migration.raw/filename "R004__bazbar_view.sql"
+                          :migration.raw/sql "create view bazbar as (...)"}])
+
+
+      (tst/is (= ["snaz" "S003__seed_sometable.sql" "bazbar"]
+                 (map
+                  (comp :migration.meta/id
+                        (partial d/entity @conn)
+                        first)
+                  (migration-eids-in-application-order conn)))
+              "Test that version order is preserved (regression test for supporting old versions)")))
+
+(defn- reduce-wave
+  [{:keys [conn facts table-name opts]} wave]
+  (loop [acc []
+         migration-eids wave]
+    (if (seq migration-eids)
+      (let [current-migration-eid (first migration-eids)
+            remaining-migration-eids (rest migration-eids)
+            entity (d/entity facts current-migration-eid)
+            migration-type (:db/ident (d/entity facts (get-in entity [:migration.meta/type :db/id])))
+            migration-map {:migrations/type migration-type
+                           :migrations/filename (:migration.raw/filename entity)
+                           :migrations/sql (:migration.raw/sql entity)
+                           :migrations/description (:migration.meta/description entity)
+                           :migrations/version (:migration.meta/version entity)}]
+        (if (= :result/error
+               (perform-migration-sql conn
+                                      table-name
+                                      migration-map
+                                      (:migrer/log-fn opts)))
+          [:result/error acc]
+          (recur (conj acc migration-map)
+                 remaining-migration-eids)))
+      acc)))
 
 (defn migrate!
   "Runs any pending migrations, returning a vector of the performed migrations in order.
@@ -528,30 +677,37 @@
                                        ::exception)
                                      (throw e)))))
          all-facts (deref fact-db)
-         migration-eids (migration-eids-in-application-order all-facts)]
-     (cond
-       (= ::exception gather-facts-result) (println "")
-       (empty? migration-eids) (println "=== Database is already up to date. ===")
-       :else (do
-               (println (str "=== Performing " (count migration-eids) " migrations: ==="))
-               (println "")
-               (reduce (fn [acc [migration-eid _]]
-                         (let [entity (d/entity all-facts migration-eid)
-                               migration-type (:db/ident (d/entity all-facts (get-in entity [:migration.meta/type :db/id])))
-                               migration-map {:migrations/type migration-type
-                                              :migrations/filename (:migration.raw/filename entity)
-                                              :migrations/sql (:migration.raw/sql entity)
-                                              :migrations/description (:migration.meta/description entity)
-                                              :migrations/version (:migration.meta/version entity)}]
-                           (if (= (perform-migration-sql
-                                   conn
-                                   table-name
-                                   migration-map
-                                   (:migrer/log-fn opts))
-                                  :result/error)
-                             (reduced acc)
-                             (conj acc migration-map))))
-                       []
-                       migration-eids)
-               (println "")
-               (println "=== Finished! ==="))))))
+         wrong-dep-specs (find-with-wrong-dependency-specs all-facts)
+         migration-waves (migration-eids-in-application-order fact-db)]
+     (if (seq wrong-dep-specs)
+       (do
+         (println "=== Problematic dependency specifications ===")
+         (println "")
+         (doseq [[id filename dep-spec] wrong-dep-specs]
+           (println (str " * - filename: " filename))
+           (println (str "   - dependency: " dep-spec))
+           (println ""))
+         (println "=== END: No migrations were performed ==="))
+       (cond
+         (= ::exception gather-facts-result) (println "")
+         (empty? migration-waves) (println "=== Database is already up to date. ===")
+         :else (do
+                 (println (str "=== Performing " (count migration-waves) " migration waves (" (count (apply set/union migration-waves)) " migrations total): ==="))
+                 (println "")
+                 (loop [acc []
+                        waves migration-waves]
+                   (if (seq waves)
+                     (let [current-wave (first waves)
+                           remaining-waves (rest waves)
+                           wave-result (reduce-wave {:conn conn
+                                                     :facts all-facts
+                                                     :table-name table-name
+                                                     :opts opts}
+                                                    current-wave)]
+                       (if (= :result/error (first wave-result))
+                         (conj acc (rest wave-result))
+                         (recur (conj acc wave-result)
+                           remaining-waves)))
+                     acc))
+                 (println "")
+                 (println "=== Finished! ===")))))))
