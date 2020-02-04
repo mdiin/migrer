@@ -71,13 +71,23 @@
   [path]
   (slurp (io/resource path)))
 
+(defn- version->int
+  [[_ _ v _ :as orig]]
+  (if v
+    (try
+      (assoc orig (Integer/parseInt v) 2)
+      (catch Exception e
+        orig))
+    orig))
+
 (with-test
   (defn extract-from-path
     [path]
     (-> path
         (str/split #"/")
         (last)
-        (->> (re-matches (re-pattern (str "^(\\w)(\\d+)?__(.+).sql$"))))))
+        (->> (re-matches (re-pattern (str "^(\\w)(\\d+)?__(.+).sql$")))
+             (version->int))))
 
   (tst/is (= ["V__foobar.sql" "V" nil "foobar"]
              (extract-from-path "V__foobar.sql")))
