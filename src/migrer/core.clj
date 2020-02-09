@@ -585,42 +585,7 @@
                                     (partial d/entity @conn)))
                          eids))
                  (migration-eids-in-application-order conn)))
-            "Test waves #2."))
-
-  #_(let [conn (facts/initialise)]
-      (d/transact! conn [{:migration.meta/id "foobar"
-                          :migration.meta/run? false
-                          :migration.meta/type :migration.type/versioned
-                          :migration.meta/version 1
-                          :migration.raw/filename "V001__create_schema.sql"
-                          :migration.raw/sql "create schema foobar"}
-                         {:migration.meta/id "snaz"
-                          :migration.meta/run? true
-                          :migration.meta/type :migration.type/versioned
-                          :migration.meta/version 2
-                          :migration.raw/filename "V002__create_table.sql"
-                          :migration.raw/sql "create table sometable (...);"}
-                         {:migration.meta/id "S003__seed_sometable.sql"
-                          :migration.meta/version 3
-                          :migration.meta/type :migration.type/seed
-                          :migration.meta/run? true
-                          :migration.raw/filename "S003__seed_sometable.sql"
-                          :migration.raw/sql "insert into sometable (...) values (...);"}
-                         {:migration.meta/id "bazbar"
-                          :migration.meta/type :migration.type/repeatable
-                          :migration.meta/run? true
-                          :migration.meta/version 4
-                          :migration.raw/filename "R004__bazbar_view.sql"
-                          :migration.raw/sql "create view bazbar as (...)"}])
-
-
-      (tst/is (= ["snaz" "S003__seed_sometable.sql" "bazbar"]
-                 (map
-                  (comp :migration.meta/id
-                        (partial d/entity @conn)
-                        first)
-                  (migration-eids-in-application-order conn)))
-              "Test that version order is preserved (regression test for supporting old versions)")))
+            "Test waves #2.")))
 
 (defn- reduce-wave
   [{:keys [conn facts table-name opts]} wave]
