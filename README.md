@@ -98,12 +98,6 @@ identifier is not a good idea.
 **Versioned** migrations contain non-repeatable DDL changes, such as creating
 tables, altering columns, creating indices; anything not repeatable basically.
 
-**Seed** migrations are similar to versioned migrations in that they contain
-statements that cannot (or should not) be performed more than once. This allows
-you to separate what your schema looks like from the rows initially in the
-tables. Separating versioned and seed migrations lets your different
-environments have different initial database row sets.
-
 **Repeatable** migrations contain repeatable DDL changes, i.e. statements that
 will not fail regardless how many times in a row they are executed. This might
 be things like creating views and stored procedures (using `CREATE OR REPLACE`).
