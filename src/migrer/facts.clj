@@ -24,7 +24,7 @@
 (declare initialise)
 
 (with-test
-  (def new-rules
+  (def rules
     '[[(direct-dependency ?e ?e')
        [?e :migration.meta/dependencies ?e']]
       [(runnable? ?e)
@@ -75,7 +75,7 @@
                       (runnable? ?e)
                       [?e :migration.meta/id ?id]]
                     @conn
-                    new-rules))
+                    rules))
             "rule: runnable [repeatable chain]"))
 
   (let [conn (initialise)]
@@ -99,7 +99,7 @@
                       (direct-dependency ?e ?e')
                       [?e' :migration.meta/id ?id]]
                     @conn
-                    new-rules))
+                    rules))
             "rule: direct-dependency"))
 
   (let [conn (initialise)]
@@ -124,7 +124,7 @@
                       (outside-wave? ?e)
                       [?e :migration.meta/id ?id]]
                     @conn
-                    new-rules))
+                    rules))
             "rule: outside-wave?"))
 
   (let [conn (initialise)]
@@ -149,7 +149,7 @@
                       (in-wave? ?e)
                       [?e :migration.meta/id ?id]]
                     @conn
-                    new-rules))
+                    rules))
             "rule: in-wave?"))
 
   (let [conn (initialise)]
@@ -223,7 +223,7 @@
                       (next-wave ?e)
                       [?e :migration.meta/id ?id]]
                     @conn
-                    new-rules))
+                    rules))
             "rule: next-wave"))
 
   (let [conn (initialise)]
@@ -246,7 +246,7 @@
                       (root-migration ?e)
                       [?e :migration.meta/id ?id]]
                     @conn
-                    new-rules))
+                    rules))
             "rule: root-migration")))
 
 (defn initialise

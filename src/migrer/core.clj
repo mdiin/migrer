@@ -430,7 +430,7 @@
                    :where
                    (root-migration ?e)]
                  facts
-                 facts/new-rules)]
+                 facts/rules)]
     (set res)))
 
 (defn- find-next-wave-migrations
@@ -440,7 +440,7 @@
                    :where
                    (next-wave ?e)]
                  facts
-                 facts/new-rules)]
+                 facts/rules)]
     (set res)))
 
 (defn- add-to-wave
