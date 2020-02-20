@@ -170,4 +170,3 @@ This project is licensed under the MIT License - see the
   inspiration
 * ActiveRecord migrations for being my entry into the world of relational
   database migrations
-
