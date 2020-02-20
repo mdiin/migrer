@@ -532,6 +532,5 @@
    (let [conn (d/create-conn s)]
      (d/transact! conn [{:db/ident :migration.type/versioned}
                         {:db/ident :migration.type/repeatable}
-                        {:db/ident :migration.type/seed}
                         {:db/ident :migration.type/invalid}])
      conn)))

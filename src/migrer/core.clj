@@ -101,8 +101,8 @@
              (extract-from-path "V999__foobar.sql")))
   (tst/is (= ["R__do_repeatable_magic.sql" "R" nil "do_repeatable_magic"]
              (extract-from-path "R__do_repeatable_magic.sql")))
-  (tst/is (= ["S__seed_some_stuff.sql" "S" nil "seed_some_stuff"]
-             (extract-from-path "S__seed_some_stuff.sql")))
+  (tst/is (= ["V__seed_some_stuff.sql" "V" nil "seed_some_stuff"]
+             (extract-from-path "V__seed_some_stuff.sql")))
   (tst/is (= nil
              (extract-from-path "onetwothree.sql")))
   (tst/is (= nil
@@ -183,7 +183,6 @@
                  :migration.meta/type (condp = type
                                         "V" :migration.type/versioned
                                         "R" :migration.type/repeatable
-                                        "S" :migration.type/seed
                                         :migration.type/invalid)
                  :migration.raw/dependencies (into #{} dependencies)
                  :migration.raw/sql sql
@@ -473,13 +472,13 @@
                         :migration.meta/dependencies []
                         :migration.raw/filename "R__bazbar_view.sql"
                         :migration.raw/sql "create view bazbar as (...)"}
-                       {:migration.meta/id "S__seed_sometable.sql"
-                        :migration.meta/type :migration.type/seed
+                       {:migration.meta/id "V__seed_sometable.sql"
+                        :migration.meta/type :migration.type/versioned
                         :migration.meta/run? true
                         :migration.meta/dependencies [[:migration.meta/id "bazbar"]]
-                        :migration.raw/filename "S__seed_sometable.sql"
+                        :migration.raw/filename "V__seed_sometable.sql"
                         :migration.raw/sql "insert into sometable (...) values (...);"}])
-    (tst/is (= ["bazbar" "S__seed_sometable.sql"]
+    (tst/is (= ["bazbar" "V__seed_sometable.sql"]
                (map
                 (comp :migration.meta/id
                       (partial d/entity @conn)
