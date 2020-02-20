@@ -9,22 +9,27 @@
 
   - File `V__create_users_table.sql` containing:
 
+  ```
   CREATE TABLE public.users (id serial NOT NULL, name text NOT NULL, email text);
+  ```
 
-  - File `S__seed_users_table.sql` containing:
+  - File `R__users_named_john.sql` containing:
 
-  {:dependencies #{\"V001__create_users_table.sql\"}}
-  INSERT INTO public.users (name, email)
-  VALUES
-    ('John Doe', NULL),
-    ('Jane Dizzle', 'jd@example.com');
+  ```
+  {:dependencies #{\"V__create_users_table.sql\"}}
+  CREATE OR REPLACE VIEW public.users_named_john AS (
+    SELECT * FROM public.users WHERE name ILIKE 'John %'
+  );
+  ```
 
   - File `R__users_with_email.sql` containing:
 
-  {:dependencies #{\"V001__create_users_table.sql\"}}
+  ```
+  {:dependencies #{\"V__create_users_table.sql\"}}
   CREATE OR REPLACE VIEW public.users_with_email AS (
     SELECT * FROM public.users WHERE email IS NOT NULL
   );
+  ```
 
   The following code will run the migrations in dependency order, i.e. lower
   sequence numbers first, and their dependents second. In this example, that
@@ -32,15 +37,15 @@
 
   1. V001__create_users_table.sql
   2. R__users_with_email.sql
-  3. S__seed_users_table.sql
+  3. R__users_named_john.sql
 
   Note: The order of 2. and 3. is undefined because they have the same number of
   dependencies.
 
   (require 'migrer.core)
   (def jdbc-connection-map {...}) ;; See clojure.java.jdbc docs
-  (migrer.core/migrate! jdbc-connection-map) ;; => [\"migrations/V001__create_users_table.sql\"
-                                                   \"migrations/V001__seed_users_table.sql\"
+  (migrer.core/migrate! jdbc-connection-map) ;; => [\"migrations/V__create_users_table.sql\"
+                                                   \"migrations/R__users_named_john.sql\"
                                                    \"migrations/R__users_with_email.sql\"]
 
   After this the database will contain the entities specified in the migrations,
@@ -48,7 +53,8 @@
   file.
 
   The invocation of `migrer.core/migrate!` can optionally be supplied with a path to the
-  migrations and a map of options. Currently no options are available.
+  migrations and a map of options. See `default-options` for the available keys and their
+  defaults.
   "
   (:require
    [migrer.facts :as facts]
