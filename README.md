@@ -68,10 +68,10 @@ and order of execution.
 The naming scheme is `Txxxx__abc_abc_abc.sql`:
 
 - `T`: The type. Either `V`ersioned or `R`epeatable
-- `xxxx`: The version. Any string of 1 or more digits, e.g. `000`, `1`, a UNIX
-  timestamp, etc.
-  - Note that migrations should specify their dependencies explicitly, instead
-    of depending on the version as dependency resolution
+- `xxxx`: **[OPTIONAL]** The version. Any string of 1 or more digits, e.g. `000`,
+  `1`, a UNIX timestamp, etc.
+  - Prefer explicit dependencies to implicit dependencies; implicits are only present
+    for backwards compatibility
 - `__`: Double underscores are significant! They separate the type and version
   from the description
 - `abc_abc_abc`: The description. Can be anything really, as long as you
@@ -97,12 +97,6 @@ identifier is not a good idea.
 
 **Versioned** migrations contain non-repeatable DDL changes, such as creating
 tables, altering columns, creating indices; anything not repeatable basically.
-
-**Seed** migrations are similar to versioned migrations in that they contain
-statements that cannot (or should not) be performed more than once. This allows
-you to separate what your schema looks like from the rows initially in the
-tables. Separating versioned and seed migrations lets your different
-environments have different initial database row sets.
 
 **Repeatable** migrations contain repeatable DDL changes, i.e. statements that
 will not fail regardless how many times in a row they are executed. This might
@@ -176,4 +170,3 @@ This project is licensed under the MIT License - see the
   inspiration
 * ActiveRecord migrations for being my entry into the world of relational
   database migrations
-
