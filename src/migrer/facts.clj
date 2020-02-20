@@ -25,14 +25,20 @@
 
 (with-test
   (def rules
-    '[[(direct-dependency ?e ?e')
+    '[[(implicit-dependency ?e ?e')
+       [?e :migration.meta/version ?v]
+       [?e' :migration.meta/version ?v']
+       [(< ?v' ?v)]]
+      [(direct-dependency ?e ?e')
        [?e :migration.meta/dependencies ?e']]
       [(runnable? ?e)
        [?e :migration.meta/run? true]]
       [(runnable? ?e)
        [?e :migration.meta/type :migration.type/repeatable]
        [?e :migration.meta/run? false]
-       (direct-dependency ?e ?e')
+       (or
+         (implicit-dependency ?e ?e')
+         (direct-dependency ?e ?e'))
        (runnable? ?e')]
       [(in-wave? ?e)
        [?e :migration.meta/wave _]]
@@ -43,17 +49,18 @@
        (runnable? ?e)
        (outside-wave? ?e)
        (not-join [?e]
-         (direct-dependency ?e ?e')
+         (or
+           (implicit-dependency ?e ?e')
+           (direct-dependency ?e ?e'))
          (runnable? ?e')
          (outside-wave? ?e'))]
       [(root-migration ?e)
        (runnable? ?e)
        (not-join [?e]
-         (direct-dependency ?e ?e')
-         (runnable? ?e'))]
-      [(root-migration ?e)
-       (runnable? ?e)
-       [(missing? $ ?e :migration.meta/dependencies)]]])
+         (or
+           (implicit-dependency ?e ?e')
+           (direct-dependency ?e ?e'))
+         (runnable? ?e'))]])
 
   (let [conn (initialise)]
     (d/transact! conn [{:migration.meta/id "A"
@@ -76,7 +83,91 @@
                       [?e :migration.meta/id ?id]]
                     @conn
                     rules))
-            "rule: runnable [repeatable chain]"))
+            "rule: runnable [repeatable chain, explicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true}
+                       {:migration.meta/id "B"
+                        :migration.meta/version 2
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? false}
+                       {:migration.meta/id "C"
+                        :migration.meta/version 3
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? false}])
+    (tst/is (= #{["A"] ["B"] ["C"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      (runnable? ?e)
+                      [?e :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: runnable [repeatable chain, implicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true}
+                       {:migration.meta/id "B"
+                        :migration.meta/version 2
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? false}
+                       {:migration.meta/id "C"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? false
+                        :migration.meta/dependencies [[:migration.meta/id "B"]]}])
+    (tst/is (= #{["A"] ["B"] ["C"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      (runnable? ?e)
+                      [?e :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: runnable [repeatable chain, implicit/explicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? false
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "B"
+                        :migration.meta/version 2
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? false
+                        :migration.meta/dependencies [[:migration.meta/id "A"]]}
+                       {:migration.meta/id "C"
+                        :migration.meta/version 3
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? false
+                        :migration.meta/dependencies [[:migration.meta/id "B"]]}])
+    (tst/is (= #{["A"] ["B"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      [?e :migration.meta/id "C"]
+                      (implicit-dependency ?e ?e')
+                      [?e' :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: implicit-dependency #1")
+
+    (tst/is (= #{["A"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      [?e :migration.meta/id "B"]
+                      (implicit-dependency ?e ?e')
+                      [?e' :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: implicit-dependency #2"))
 
   (let [conn (initialise)]
     (d/transact! conn [{:migration.meta/id "A"
@@ -224,7 +315,145 @@
                       [?e :migration.meta/id ?id]]
                     @conn
                     rules))
-            "rule: next-wave"))
+            "rule: next-wave [explicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/wave 1}
+                       {:migration.meta/id "B"
+                        :migration.meta/version 2
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/wave 2
+                        :migration.meta/run? true}
+                       {:migration.meta/id "C"
+                        :migration.meta/version 3
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/wave 3
+                        :migration.meta/run? true}
+                       {:migration.meta/id "D"
+                        :migration.meta/version 4
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/wave 4
+                        :migration.meta/run? true}
+                       {:migration.meta/id "E"
+                        :migration.meta/version 5
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true}
+                       {:migration.meta/id "F"
+                        :migration.meta/version 6
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}
+                       {:migration.meta/id "G"
+                        :migration.meta/version 7
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true}
+                       {:migration.meta/id "H"
+                        :migration.meta/version 8
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}
+                       {:migration.meta/id "I"
+                        :migration.meta/version 9
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}
+                       {:migration.meta/id "J"
+                        :migration.meta/version 10
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}
+                       {:migration.meta/id "K"
+                        :migration.meta/version 11
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true}
+                       {:migration.meta/id "L"
+                        :migration.meta/version 12
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}])
+    (tst/is (= #{["E"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      (next-wave ?e)
+                      [?e :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: next-wave [implicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/wave 1}
+                       {:migration.meta/id "B"
+                        :migration.meta/version 2
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/wave 2}
+                       {:migration.meta/id "C"
+                        :migration.meta/version 3
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/wave 3}
+                       {:migration.meta/id "D"
+                        :migration.meta/version 4
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/wave 4}
+                       {:migration.meta/id "E"
+                        :migration.meta/version 5
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/wave 5}
+                       {:migration.meta/id "F"
+                        :migration.meta/version 6
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/wave 6}
+                       {:migration.meta/id "G"
+                        :migration.meta/version 7
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/wave 7}
+                       {:migration.meta/id "H"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "G"]
+                                                      [:migration.meta/id "E"]
+                                                      [:migration.meta/id "A"]
+                                                      [:migration.meta/id "B"]]}
+                       {:migration.meta/id "I"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "A"]
+                                                      [:migration.meta/id "B"]
+                                                      [:migration.meta/id "F"]
+                                                      [:migration.meta/id "G"]]}
+                       {:migration.meta/id "J"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "B"]
+                                                      [:migration.meta/id "C"]]}
+                       {:migration.meta/id "K"
+                        :migration.meta/type :migration.type/repeatable
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "B"]]}
+                       {:migration.meta/id "L"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "C"]
+                                                      [:migration.meta/id "F"]
+                                                      [:migration.meta/id "H"]]}])
+    (tst/is (= #{["H"] ["I"] ["J"] ["K"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      (next-wave ?e)
+                      [?e :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: next-wave [implicit/explicit]"))
 
   (let [conn (initialise)]
     (d/transact! conn [{:migration.meta/id "A"
@@ -247,7 +476,55 @@
                       [?e :migration.meta/id ?id]]
                     @conn
                     rules))
-            "rule: root-migration")))
+            "rule: root-migration [explicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "B"
+                        :migration.meta/version 2
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}
+                       {:migration.meta/id "C"
+                        :migration.meta/version 3
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true}])
+    (tst/is (= #{["A"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      (root-migration ?e)
+                      [?e :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: root-migration [implicit]"))
+
+  (let [conn (initialise)]
+    (d/transact! conn [{:migration.meta/id "A"
+                        :migration.meta/version 1
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies []}
+                       {:migration.meta/id "B"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies [[:migration.meta/id "A"]]}
+                       {:migration.meta/id "C"
+                        :migration.meta/type :migration.type/versioned
+                        :migration.meta/run? true
+                        :migration.meta/dependencies []}])
+    (tst/is (= #{["A"] ["C"]}
+               (d/q '[:find ?id
+                      :in $ %
+                      :where
+                      (root-migration ?e)
+                      [?e :migration.meta/id ?id]]
+                    @conn
+                    rules))
+            "rule: root-migration [implicit/explicit]")))
 
 (defn initialise
   ([] (initialise schema))
