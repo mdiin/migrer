@@ -60,7 +60,6 @@
    [migrer.facts :as facts]
    [clojure.java.io :as io]
    [clojure.java.jdbc :as jdbc]
-   [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [clojure.set :as set]
    [clojure.test :as tst :refer [with-test]]
