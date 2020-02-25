@@ -1,4 +1,4 @@
-(ns migrer.core-test
+(ns migrer.test.implicit-dependencies
   (:require [migrer.core :as m]
             [clojure.test :refer :all]
             [clojure.java.jdbc :as jdbc]))
@@ -18,7 +18,7 @@
   (fn [tests]
     (binding [test-h2-db (make-test-h2-db)]
       (m/init! test-h2-db)
-      (m/migrate! test-h2-db)
+      (m/migrate! test-h2-db {:migrer/root "migrations/implicit_dependencies"})
       (tests))))
 
 (deftest test-init!

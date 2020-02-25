@@ -1,4 +1,4 @@
-(ns migrer.performance-test
+(ns migrer.test.performance-test
   (:require [migrer.core :as m]
             [migrer.facts :as f]
             [clojure.test :refer :all]
