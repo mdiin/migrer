@@ -78,10 +78,10 @@
   (slurp (io/resource path)))
 
 (defn- version->int
-  [[_ _ v _ :as orig]]
+  [[filename type v description :as orig]]
   (if v
     (try
-      (assoc orig (Integer/parseInt v) 2)
+      [filename type (Integer/parseInt v) description]
       (catch Exception e
         orig))
     orig))
@@ -97,7 +97,7 @@
 
   (tst/is (= ["V__foobar.sql" "V" nil "foobar"]
              (extract-from-path "V__foobar.sql")))
-  (tst/is (= ["V999__foobar.sql" "V" "999" "foobar"]
+  (tst/is (= ["V999__foobar.sql" "V" 999 "foobar"]
              (extract-from-path "V999__foobar.sql")))
   (tst/is (= ["R__do_repeatable_magic.sql" "R" nil "do_repeatable_magic"]
              (extract-from-path "R__do_repeatable_magic.sql")))
