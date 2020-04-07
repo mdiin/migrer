@@ -168,7 +168,8 @@
   (try
     (log-fn {:event/type :progress :event/data sql} migration-map)
     (let [time-start (.. (new java.util.Date) (getTime))]
-      (jdbc/execute! conn [sql])
+      (doseq [stmt (str/split sql #"--**")]
+        (jdbc/execute! conn [stmt]))
       (log-fn {:event/type :done
                :event/data {:ms (- (.. (new java.util.Date) (getTime)) time-start)}}
               migration-map)
