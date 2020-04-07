@@ -42,13 +42,13 @@
   migrations and a map of options. Currently no options are available.
   "
   (:require
-   [clojure.java.io :as io]
-   [clojure.java.jdbc :as jdbc]
-   [clojure.spec.alpha :as s]
-   [clojure.string :as str])
+    [clojure.java.io :as io]
+    [clojure.java.jdbc :as jdbc]
+    [clojure.spec.alpha :as s]
+    [clojure.string :as str])
   (:import
-   [org.postgresql.util PSQLException]
-   [java.security MessageDigest]))
+    [org.postgresql.util PSQLException]
+    [java.security MessageDigest]))
 
 (defn- compare-migration-maps
   [m1 m2]
@@ -98,11 +98,11 @@
                            "V" :versioned
                            "S" :seed
                            "R" :repeatable)]
-      #:migrations{:type migration-type
-                   :filename filename
-                   :sql (read-sql-fn (str root "/" filename))
+      #:migrations{:type        migration-type
+                   :filename    filename
+                   :sql         (read-sql-fn (str root "/" filename))
                    :description description
-                   :version version})))
+                   :version     version})))
 
 (defn- md5sum
   "Attribution: https://gist.github.com/jizhang/4325757"
@@ -116,11 +116,11 @@
 (defn- migrations-xform
   [root exclusions repeatable-hashes read-sql-fn]
   (comp
-   (remove exclusions)
-   (map (partial migration-map read-sql-fn root))
-   (remove (fn [{filename :migrations/filename sql :migrations/sql}]
-             (when-let [old-hash (get repeatable-hashes filename)]
-               (= old-hash (md5sum sql)))))))
+    (remove exclusions)
+    (map (partial migration-map read-sql-fn root))
+    (remove (fn [{filename :migrations/filename sql :migrations/sql}]
+              (when-let [old-hash (get repeatable-hashes filename)]
+                (= old-hash (md5sum sql)))))))
 
 (defn- read-migrations-fs
   "Returns a vector of all migrations in migration root, read from filesystem."
@@ -129,9 +129,9 @@
     (sort migration-map-comparator
           (into []
                 (comp
-                 (filter #(not (.isDirectory %)))
-                 (map #(.getName %))
-                 (migrations-xform root exclusions repeatable-hashes read-file))
+                  (filter #(not (.isDirectory %)))
+                  (map #(.getName %))
+                  (migrations-xform root exclusions repeatable-hashes read-file))
                 (.listFiles dir-file)))))
 
 (defn- read-migrations-resources
@@ -141,9 +141,9 @@
              resource stream to read the names of all resources inside a resource dir."}
   [root exclusions repeatable-hashes]
   (with-open [rdr (io/reader
-                   (.getResourceAsStream
-                    (.. Thread currentThread getContextClassLoader)
-                    root))]
+                    (.getResourceAsStream
+                      (.. Thread currentThread getContextClassLoader)
+                      root))]
     (sort migration-map-comparator
           (into []
                 (migrations-xform root exclusions repeatable-hashes read-resource)
@@ -162,25 +162,40 @@
                  [filename (:hash entry)]))
           (group-by :filename repeatable-hashes))))
 
+(defn try? [sql]
+  (let [ms (re-matches #"(?s)^--TRY (.+)$" sql)]
+    (if (seq (second ms))
+      (second ms)
+      nil)))
+
 (defn- perform-migration-sql
   [conn migrations-table {sql :migrations/sql :as migration-map} log-fn]
   (log-fn {:event/type :start} migration-map)
   (try
-    (log-fn {:event/type :progress :event/data sql} migration-map)
     (let [time-start (.. (new java.util.Date) (getTime))]
-      (jdbc/execute! conn [sql])
+      (doseq [stmt (str/split sql #"--\*\*")]
+        (if-let [stmt' (try? stmt)]
+          (try
+            (log-fn {:event/type :progress :event/data stmt'} migration-map)
+            (jdbc/execute! conn stmt')
+            (catch Exception e
+              (log-fn {:event/type :progress :event/data (str "--TRY statement failed, continuing: " stmt')}
+                      migration-map)))
+          (do
+            (log-fn {:event/type :progress :event/data stmt} migration-map)
+            (jdbc/execute! conn [stmt]))))
       (log-fn {:event/type :done
                :event/data {:ms (- (.. (new java.util.Date) (getTime)) time-start)}}
               migration-map)
-      (let [{type :migrations/type
-             version :migrations/version
+      (let [{type     :migrations/type
+             version  :migrations/version
              filename :migrations/filename} migration-map]
         (if (= type :repeatable)
           (jdbc/with-db-transaction [tx-conn conn]
-            (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
-                                    filename])
-            (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status, performed_at) VALUES (?, ?, ?, ?, 'performed', ?)")
-                                 (name type) version filename (md5sum sql) (java.sql.Date. (.getTime (java.util.Date.)))]))
+                                    (jdbc/execute! tx-conn [(str "UPDATE " migrations-table " SET status = 'invalidated' WHERE type = 'repeatable' AND filename = ?")
+                                                            filename])
+                                    (jdbc/execute! tx-conn [(str "INSERT INTO " migrations-table " (type, version, filename, hash, status, performed_at) VALUES (?, ?, ?, ?, 'performed', ?)")
+                                                            (name type) version filename (md5sum sql) (java.sql.Date. (.getTime (java.util.Date.)))]))
           (jdbc/execute! conn [(str "INSERT INTO " migrations-table " (type, version, filename, status, performed_at) VALUES (?, ?, ?, 'performed', ?)")
                                (name type) version filename (java.sql.Date. (.getTime (java.util.Date.)))])))
       :result/done)
@@ -192,9 +207,9 @@
 (defn- log-migration
   [event migration-map]
   (let [{event-type :event/type} event
-        {type :migrations/type
-         version :migrations/version
-         sql :migrations/sql
+        {type        :migrations/type
+         version     :migrations/version
+         sql         :migrations/sql
          description :migrations/description} migration-map]
     (case event-type
       (:start) (println (str "=== " event-type " === [" type " | " description " @ " version "]"))
@@ -208,10 +223,10 @@
                             "=== time: " (get-in event [:event/data :ms]) "ms ==="
                             "\n")))))
 
-(def default-options {:migrer/root "migrations/"
-                      :migrer/table-name :migrations
-                      :migrer/use-classpath? true
-                      :migrer/log-fn #'log-migration
+(def default-options {:migrer/root                    "migrations/"
+                      :migrer/table-name              :migrations
+                      :migrer/use-classpath?          true
+                      :migrer/log-fn                  #'log-migration
                       :init/conditional-create-table? true
                       :init/conditional-create-index? true})
 
@@ -285,10 +300,10 @@
                (println "")
                (reduce (fn [acc migration-map]
                          (if (= (perform-migration-sql
-                                 conn
-                                 table-name
-                                 migration-map
-                                 (:migrer/log-fn opts))
+                                  conn
+                                  table-name
+                                  migration-map
+                                  (:migrer/log-fn opts))
                                 :result/error)
                            (reduced acc)
                            (conj acc migration-map)))
