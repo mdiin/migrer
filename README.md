@@ -1,5 +1,7 @@
 # migrer
 
+*DEPRECATION NOTICE*: I recommend trying out [sqitch](https://sqitch.org) if you are able to use it. That approach works well, and implements the ideas I was going for here in a sane way. I still have a wishlist for sqitch, but it is smaller than the one I have for migrer.
+
 migrer is a simple and VCS-friendly utility for migrating databases in any JDBC-supported RDBMS.
 
 *Alpha software*: migrer is still to be considered alpha-quality software. I have yet to test it in a project myself. Because of this, I have yet to
